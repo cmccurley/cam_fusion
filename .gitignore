@@ -12,3 +12,4 @@
 *.mat
 *.db
 .DS_store
+*.zip
