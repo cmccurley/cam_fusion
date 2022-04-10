@@ -304,6 +304,7 @@ if __name__== "__main__":
     
     dask_arrays = []
     dask_gt_arrays = []
+    sample_idx = 0
     for data in tqdm(test_loader):
         
         if (parameters.DATASET == 'mnist'):
@@ -345,8 +346,8 @@ if __name__== "__main__":
                 gt_img_p[ones_idx] = 0
 #                plt.figure()
 #                plt.imshow(gt_img,cmap='gray')
-            gt_array = da.from_array(np.expand_dims(gt_img_p,axis=0))
-            dask_gt_arrays.append(gt_array)
+#            gt_array = da.from_array(np.expand_dims(gt_img_p,axis=0))
+#            dask_gt_arrays.append(gt_array)
             
             pred_label_p = int(labels_p.detach().cpu().numpy())
             
@@ -392,8 +393,16 @@ if __name__== "__main__":
             activations = np.zeros((all_activations_p.shape[1]*all_activations_p.shape[2],all_activations_p.shape[0]))
             for k in range(all_activations_p.shape[0]):
                 activations[:,k] = all_activations_p[k,:,:].reshape((all_activations_p.shape[1]*all_activations_p.shape[2]))
-            array = da.from_array(activations)
-            dask_arrays.append(array)
+#            array = da.from_array(activations)
+#            dask_arrays.append(array)
+            
+            if not(sample_idx):
+                dask_all_activations_p = da.from_array(activations.T)
+                dask_gt_p = da.from_array(np.expand_dims(gt_img_p,axis=0))
+                sample_idx += 1
+            else:
+                dask_all_activations_p = da.concatenate((dask_all_activations_p, da.from_array(activations.T)), axis=1)
+                dask_gt_p = da.concatenate((dask_gt_p, da.from_array(np.expand_dims(gt_img_p,axis=0))),axis=0)
             
 #            if len(dask_arrays) > 4:
 #                dask_all_activations_p = da.concatenate(dask_arrays, axis=0).T
@@ -407,12 +416,11 @@ if __name__== "__main__":
 #                del array
 #                break
     
-    dask_all_activations_p = da.concatenate(dask_arrays, axis=0).T
+#    dask_all_activations_p = da.concatenate(dask_arrays, axis=0).T
     ## Only use first stage
     dask_all_activations_p = dask_all_activations_p[0:64,:]
-    dask_gt_p = da.concatenate(dask_gt_arrays, axis=0)
-    del dask_arrays
-    del array
+#    dask_gt_p = da.concatenate(dask_gt_arrays, axis=0)
+#    del dask_arrays
             
     print('\nExtracting NEGATIVE bag activation maps...\n')
     
@@ -502,8 +510,8 @@ if __name__== "__main__":
             activations = np.zeros((all_activations_p.shape[1]*all_activations_p.shape[2],all_activations_p.shape[0]))
             for k in range(all_activations_p.shape[0]):
                 activations[:,k] = all_activations_p[k,:,:].reshape((all_activations_p.shape[1]*all_activations_p.shape[2]))
-            array = da.from_array(activations)
-            dask_arrays.append(array)
+#            array = da.from_array(activations)
+#            dask_arrays.append(array)
             
 #            if len(dask_arrays) > 4:
 #                dask_all_activations_n = da.concatenate(dask_arrays, axis=0).T
@@ -514,14 +522,20 @@ if __name__== "__main__":
 #                del dask_arrays
 #                del array                
 #                break
+            
+            if not(sample_idx):
+                dask_all_activations_n = da.from_array(activations.T)
+                sample_idx += 1
+            else:
+                dask_all_activations_n = da.concatenate((dask_all_activations_n, da.from_array(activations.T)), axis=1)
     
-    dask_all_activations_n = da.concatenate(dask_arrays, axis=0).T
+#    dask_all_activations_n = da.concatenate(dask_arrays, axis=0).T
     
     ## Only use first stage
     dask_all_activations_n = dask_all_activations_n[0:64,:]
     
-    del dask_arrays
-    del array                
+#    del dask_arrays
+#    del array                
     
 #    all_activations_p = scores_by_stage_p['1']['activations']
 #    all_activations_n = scores_by_stage_n['1']['activations']
