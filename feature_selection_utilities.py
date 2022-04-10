@@ -19,6 +19,8 @@ from sklearn.metrics.pairwise import manhattan_distances
 from sklearn_extra.cluster import KMedoids
 from skimage.filters import threshold_otsu
 
+
+import dask.array as da
 from cm_choquet_integral import ChoquetIntegral
 
 
@@ -692,15 +694,6 @@ def select_features_otsu(indices, activation_set, all_activations, gt_img, label
         activation_set = np.concatenate((activation_set,np.expand_dims(all_activations[sorted_corr_idx[new_idx],:,:],axis=0)),axis=0)
         
         
-        ###########################################################################
-        ################################# Plots ###################################
-        ###########################################################################
-        
-        
-        
-        
-        
-        
 
     return indices, activation_set, feature_iou[sorted_corr_idx[new_idx]]
 
@@ -919,3 +912,151 @@ def select_features_divergence_pos_and_neg(all_activations_p, all_activations_n,
         json.dump(results, outfile, indent=2)
 
     return return_indices, return_activation_set
+
+###############################################################################
+############################# Dask MIL Selection ##############################
+###############################################################################
+
+def dask_select_features_divergence(indices, activations_p, activations_n, NUM_SOURCES):
+    
+    num_samples_p = activations_p.shape[1] 
+    num_samples_n = activations_n.shape[1] 
+    num_all_sources = activations_p.shape[0]
+    
+#    ## Reshape activations
+#    activations_p = np.zeros((all_activations_p.shape[0],all_activations_p.shape[1]*all_activations_p.shape[2]))
+#    for idk in range(all_activations_p.shape[0]):
+#        activations_p[idk,:] = all_activations_p[idk,:,:].reshape((all_activations_p.shape[1]*all_activations_p.shape[2]))
+#        
+#    activations_n = np.zeros((all_activations_n.shape[0],all_activations_n.shape[1]*all_activations_n.shape[2]))
+#    for idk in range(all_activations_n.shape[0]):
+#        activations_n[idk,:] = all_activations_n[idk,:,:].reshape((all_activations_n.shape[1]*all_activations_n.shape[2]))
+        
+    ## Find the feature which maximizes the entropy of the sort histogram 
+    for k in range(len(indices),NUM_SOURCES): ## Greedily add sources until desired number is reached
+        
+#        print(f'Selecting source {str(k+1)} of {str(NUM_SOURCES)}...')
+        
+        num_sources  = len(indices)+ 1 
+        
+        ## Update list of all possible sorts
+        all_sources = list(np.arange(num_sources)+1)
+        all_sorts = []
+        all_sorts_tuple = list(itertools.permutations(all_sources))
+        for sort in all_sorts_tuple:
+            all_sorts.append(list(sort))
+        
+        divergence = np.zeros((num_all_sources))
+        
+        ## Used for fast feature selection (Can't use more than 9 sources)
+        encoding_vect = 10**np.arange(0,num_sources)[::-1]
+        bin_centers = np.dot(np.array(all_sorts),encoding_vect)
+        hist_bins = [0] + list(bin_centers+1)  
+        
+#        hist_bins = list(np.arange(0,len(all_sorts)+1)+0.5)  
+        
+        ##### Get divergence of sorts adding each feature, incrementally ######
+        for idx in range(0,num_all_sources):
+            
+            current_indices = indices + [idx]
+            
+            ####### Get the sorts histogram for the positive bags #############
+            ## Sort activations for each sample
+            pi_i_p = np.argsort(activations_p[current_indices,:],axis=0)[::-1,:] + 1 ## Sorts each sample from greatest to least
+
+            ## Get normalized histogram
+            sorts_for_current_activation_p = np.dot(pi_i_p.T,encoding_vect)
+            hist_p, _ = np.histogram(sorts_for_current_activation_p, bins=hist_bins, density=False)
+            hist_p += 1
+            p = hist_p/(num_samples_p + len(all_sorts))
+            
+            ####### Get the sorts histogram for the negative bags #############
+            ## Sort activations for each sample
+            pi_i_n = np.argsort(activations_n[current_indices,:],axis=0)[::-1,:] + 1 ## Sorts each sample from greatest to least
+
+            ## Get normalized histogram
+            sorts_for_current_activation_n = np.dot(pi_i_n.T,encoding_vect)
+            hist_n, _ = np.histogram(sorts_for_current_activation_n, bins=hist_bins, density=False)
+            hist_n += 1
+            q = hist_n/(num_samples_n + len(all_sorts))
+
+            ########## Compute the divergence between histograms ##############
+            ## KL(Pos||Neg), Deviation of positive from negative
+            divergence[idx] = np.sum(np.multiply(p,np.log2(np.divide(p,q))))
+        
+#            ## KL(Neg||Pos), Deviation of negative from positive
+#            divergence[idx] = np.sum(np.multiply(q,np.log2(np.divide(q,p))))
+            
+#            ## JS(Pos,Neg), Symmetric
+#            m = 0.5*(p+q)
+#            divergence[idx] = 0.5*np.sum(np.multiply(p,np.log2(np.divide(p,m)))) + 0.5*np.sum(np.multiply(q,np.log2(np.divide(q,m))))
+            
+        
+        ## Sort entropy values and add feature with max entropy to set of sources (largest to smallest)
+        sorted_corr_idx = (-divergence).argsort()
+    
+        new_idx = 0
+        while((da.sum(activations_p[sorted_corr_idx[new_idx],:] > 0.01).compute() < 2) or (sorted_corr_idx[new_idx] in indices)):
+            new_idx += 1
+        
+        ## Add chosen source to set of sources
+        indices.append(int(sorted_corr_idx[new_idx]))
+
+    return indices, divergence[sorted_corr_idx[new_idx]]
+
+def dask_select_features_divergence_pos_and_neg(all_activations_p, all_activations_n, NUM_SOURCES, savepath):
+    
+    print('\n Running exhaustive selection... \n')
+
+    #######################################################################
+    ################### Select Sources for Sort Entropy ###################
+    #######################################################################
+    
+    num_all_sources = all_activations_p.shape[0]
+    
+    ind_set = []
+    ent_set = []
+    
+    ## Initialize selection with each source in positive bag
+    for k in tqdm(range(num_all_sources)):
+        
+        input_ind = [k]
+        
+        ind, ent = dask_select_features_divergence(input_ind, all_activations_p, all_activations_n, NUM_SOURCES)
+    
+        ind_set.append(ind)
+        ent_set.append(ent)
+    
+    ## Order divergences from greatest to least
+    top_order = (-np.array(ent_set)).argsort().astype(np.int16).tolist()
+    top_order_ind = int(top_order[0])
+    
+    return_indices = ind_set[top_order_ind]
+#    return_activation_set = act_set[top_order_ind]
+    
+    results_savepath_text = savepath + '/results.txt'
+    results_savepath_json = savepath + '/results.json'
+    results_savepath_dict = savepath + '/results.npy'
+    
+    ## Accumulate results for saving
+    results = dict()
+    results['best_set_index'] = top_order_ind
+    results['best_set_activations'] = return_indices
+    results['best_set_ent'] = ent_set[top_order_ind]
+    results['ind_set_all_unordered'] = ind_set
+    results['ent_set_all_unordered'] = ent_set
+    results['ind_ordered_max_entropy_to_min'] = top_order
+    
+    ## Save parameters         
+    with open(results_savepath_text, 'w') as f:
+        json.dump(results, f, indent=2)
+    f.close   
+    
+    ## Save to numpy file
+    np.save(results_savepath_dict, results, allow_pickle=True)
+    
+    ## save to JSON
+    with open (results_savepath_json, 'w') as outfile:
+        json.dump(results, outfile, indent=2)
+
+    return return_indices

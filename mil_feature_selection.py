@@ -50,6 +50,8 @@ import matplotlib.pyplot as plt
 import matplotlib.colors
 from skimage.filters import threshold_otsu
 
+import dask.array as da
+
 # PyTorch packages
 import torch
 import torchvision
@@ -63,7 +65,7 @@ import initialize_network
 from util import convert_gt_img_to_mask, cam_img_to_seg_img
 from dataloaders import loaderPASCAL, loaderDSIAC
 from feature_selection_utilities import select_features_sort_entropy, select_features_hag, select_features_exhaustive_entropy, select_features_exhaustive_iou, select_features_divergence_pos_and_neg
-
+from feature_selection_utilities import dask_select_features_divergence_pos_and_neg
 import numpy as np
 #from cam_functions import GradCAM, LayerCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, EigenCAM
 from cam_functions.utils.image import show_cam_on_image, preprocess_image
@@ -225,7 +227,7 @@ if __name__== "__main__":
 #        test_loader = torch.utils.data.DataLoader(testset, batch_size=parameters.BATCH_SIZE, shuffle=True, pin_memory=False)
         valid_loader = torch.utils.data.DataLoader(validset, batch_size=parameters.BATCH_SIZE, shuffle=True, pin_memory=False) 
         
-        test_loader = torch.utils.data.DataLoader(validset, batch_size=parameters.BATCH_SIZE, shuffle=True, pin_memory=False)
+        test_loader = torch.utils.data.DataLoader(trainset, batch_size=parameters.BATCH_SIZE, shuffle=True, pin_memory=False)
         
         parameters.mnist_target_class = 7
         parameters.mnist_background_class = 1
@@ -280,7 +282,7 @@ if __name__== "__main__":
 ############################# Sorting Analysis ################################
 ###############################################################################
     
-    new_save_path =  '/mil_selection_kl_divergence_pos_from_neg'
+    new_save_path =  '/mil_selection_kl_divergence_pos_from_neg_no_inverted_stage_1'
 #    new_save_path =  '/mil_selection_js_divergence'
     parameters.feature_class = 'target'
     
@@ -300,7 +302,8 @@ if __name__== "__main__":
     
     print('\nExtracting POSITIVE bag activation maps...\n')
     
-    sample_idx = 0
+    dask_arrays = []
+    dask_gt_arrays = []
     for data in tqdm(test_loader):
         
         if (parameters.DATASET == 'mnist'):
@@ -342,6 +345,8 @@ if __name__== "__main__":
                 gt_img_p[ones_idx] = 0
 #                plt.figure()
 #                plt.imshow(gt_img,cmap='gray')
+            gt_array = da.from_array(np.expand_dims(gt_img_p,axis=0))
+            dask_gt_arrays.append(gt_array)
             
             pred_label_p = int(labels_p.detach().cpu().numpy())
             
@@ -381,14 +386,37 @@ if __name__== "__main__":
                 else:
                     all_activations_p = np.append(all_activations_p, activations_p, axis=0)
                     all_importance_weights_p = np.append(all_importance_weights_p, importance_weights_p, axis=0)
-                            
-            break
-        else:
-            sample_idx +=1
+            
+            
+            ## Convert to dask arrays
+            activations = np.zeros((all_activations_p.shape[1]*all_activations_p.shape[2],all_activations_p.shape[0]))
+            for k in range(all_activations_p.shape[0]):
+                activations[:,k] = all_activations_p[k,:,:].reshape((all_activations_p.shape[1]*all_activations_p.shape[2]))
+            array = da.from_array(activations)
+            dask_arrays.append(array)
+            
+#            if len(dask_arrays) > 4:
+#                dask_all_activations_p = da.concatenate(dask_arrays, axis=0).T
+#                
+#                ## Only use first stage
+#                dask_all_activations_p = dask_all_activations_p[0:64,:]
+#                
+#                
+#                dask_gt_p = da.concatenate(dask_gt_arrays, axis=0)
+#                del dask_arrays
+#                del array
+#                break
+    
+    dask_all_activations_p = da.concatenate(dask_arrays, axis=0).T
+    ## Only use first stage
+    dask_all_activations_p = dask_all_activations_p[0:64,:]
+    dask_gt_p = da.concatenate(dask_gt_arrays, axis=0)
+    del dask_arrays
+    del array
             
     print('\nExtracting NEGATIVE bag activation maps...\n')
-    SAMPLE_IDX = 6
-    sample_idx = 0
+    
+    dask_arrays = []
     for data in tqdm(test_loader):
                     
         if (parameters.DATASET == 'mnist'):
@@ -469,33 +497,54 @@ if __name__== "__main__":
                 else:
                     all_activations_n = np.append(all_activations_n, activations_n, axis=0)
                     all_importance_weights_n = np.append(all_importance_weights_n, importance_weights_n, axis=0)
-                            
-            break
-        else:
-            sample_idx +=1
             
-    all_activations_p = scores_by_stage_p['1']['activations']
-    all_activations_n = scores_by_stage_n['1']['activations']
-
-    images_p = images_p.permute(2,3,1,0)
-    images_p = images_p.detach().cpu().numpy()
-    image_p = images_p[:,:,:,0]
+            ## Convert to dask arrays
+            activations = np.zeros((all_activations_p.shape[1]*all_activations_p.shape[2],all_activations_p.shape[0]))
+            for k in range(all_activations_p.shape[0]):
+                activations[:,k] = all_activations_p[k,:,:].reshape((all_activations_p.shape[1]*all_activations_p.shape[2]))
+            array = da.from_array(activations)
+            dask_arrays.append(array)
+            
+#            if len(dask_arrays) > 4:
+#                dask_all_activations_n = da.concatenate(dask_arrays, axis=0).T
+#                
+#                ## Only use first stage
+#                dask_all_activations_n = dask_all_activations_n[0:64,:]
+#                
+#                del dask_arrays
+#                del array                
+#                break
     
-    plt.figure()
-    plt.imshow(image_p)
+    dask_all_activations_n = da.concatenate(dask_arrays, axis=0).T
     
-    plt.figure()
-    plt.imshow(gt_img_p)
+    ## Only use first stage
+    dask_all_activations_n = dask_all_activations_n[0:64,:]
     
-    images_n = images_n.permute(2,3,1,0)
-    images_n = images_n.detach().cpu().numpy()
-    image_n = images_n[:,:,:,0]
+    del dask_arrays
+    del array                
     
-    plt.figure()
-    plt.imshow(image_n)
-    
-    plt.figure()
-    plt.imshow(gt_img_n)
+#    all_activations_p = scores_by_stage_p['1']['activations']
+#    all_activations_n = scores_by_stage_n['1']['activations']
+#
+#    images_p = images_p.permute(2,3,1,0)
+#    images_p = images_p.detach().cpu().numpy()
+#    image_p = images_p[:,:,:,0]
+#    
+#    plt.figure()
+#    plt.imshow(image_p)
+#    
+#    plt.figure()
+#    plt.imshow(gt_img_p)
+#    
+#    images_n = images_n.permute(2,3,1,0)
+#    images_n = images_n.detach().cpu().numpy()
+#    image_n = images_n[:,:,:,0]
+#    
+#    plt.figure()
+#    plt.imshow(image_n)
+#    
+#    plt.figure()
+#    plt.imshow(gt_img_n)
 
 #    ###########################################################################
 #    ########################### Sort Activations ##############################
@@ -525,7 +574,7 @@ if __name__== "__main__":
 ##        plt.close()
 
 ##    
-    for SOURCES in [3]:
+    for SOURCES in [4]:
         new_save_path =  new_directory + '/sort_exhaustive_' + str(SOURCES) + '_sources'
         
         parameters.feature_class = 'target'
@@ -545,352 +594,352 @@ if __name__== "__main__":
         ##########################################################################
         
         indices_savepath = img_savepath
-        indices, activation_set = select_features_divergence_pos_and_neg(all_activations_p, all_activations_n, NUM_SOURCES, indices_savepath)
+        indices = dask_select_features_divergence_pos_and_neg(dask_all_activations_p, dask_all_activations_n, NUM_SOURCES, indices_savepath)
         
-        ###########################################################################
-        ############################## Compute ChI ################################
-        ###########################################################################
-    
-        activation_set_p = all_activations_p[indices,:,:]
-        
-        labels_p = np.reshape(gt_img_p,(gt_img_p.shape[0]*gt_img_p.shape[1]))
-        
-        data_p = np.zeros((activation_set_p.shape[0],activation_set_p.shape[1]*activation_set_p.shape[2]))
-        
-        for idx in range(len(indices)):
-            data_p[idx,:] = np.reshape(activation_set_p[idx,:,:],(1,activation_set_p[idx,:,:].shape[0]*activation_set_p[idx,:,:].shape[1]))
-            
-        print('Computing Fuzzy Measure...')    
-        
-        chi = ChoquetIntegral()    
-        
-        # train the chi via quadratic program 
-        chi.train_chi(data_p, labels_p)
-        fm = chi.fm
-        
-        fm_savepath = img_savepath + '/fm'
-        np.save(fm_savepath, fm)
-            
-        fm_file = fm_savepath + '.txt'
-        ## Save parameters         
-        with open(fm_file, 'w') as f:
-            json.dump(fm, f, indent=2)
-        f.close 
-            
-        ###########################################################################
-        ############################ Print Equations ##############################
-        ###########################################################################
-        if (NUM_SOURCES < 7):
-            eqt_dict = chi.get_linear_eqts()
-            
-            ## Save equations
-            savename = img_savepath + '/chi_equations.txt'
-            with open(savename, 'w') as f:
-                json.dump(eqt_dict, f, indent=2)
-            f.close 
-            
-        ###########################################################################
-        ################################ Test Data ################################
-        ###########################################################################
-        print('Testing positive data...')  
-   
-        try:
-            pos_savepath =  img_savepath + '/positive'
-            os.mkdir(pos_savepath)
-        except:
-            pos_savepath =  img_savepath + '/positive'
-            
-        
-        ## Compute ChI at every pixel location
-        data_out_p = np.zeros((data_p.shape[1]))
-        data_out_sorts_p = []
-        data_out_sort_labels_p = np.zeros((data_p.shape[1]))   
-    
-        all_sorts = chi.all_sorts
-        
-        if (NUM_SOURCES < 7):
-        
-            for idx in range(data_p.shape[1]):
-                data_out_p[idx], data_out_sort_labels_p[idx] = chi.chi_by_sort(data_p[:,idx])         
-            
-            ## Define custom colormap
-            custom_cmap = plt.cm.get_cmap('jet', len(all_sorts))
-            norm = matplotlib.colors.Normalize(vmin=1,vmax=len(all_sorts))
-            
-            ## Plot frequency histogram of sorts for single image
-            sort_tick_labels = []
-            for element in all_sorts:
-                sort_tick_labels.append(str(element))
-            hist_bins = list(np.arange(0,len(all_sorts)+1)+0.5)
-            plt.figure(figsize=[10,8])
-            ax = plt.axes()
-            plt.xlabel('Sorts', fontsize=14)
-            plt.ylabel('Count', fontsize=14)
-            n, bins, patches = plt.hist(data_out_sort_labels_p, bins=hist_bins, align='mid')
-            plt.xlim([0.5,len(all_sorts)+0.5])
-            ax.set_xticks(list(np.arange(1,len(all_sorts)+1)))
-            ax.set_xticklabels(sort_tick_labels,rotation=45,ha='right')
-            for idx, current_patch in enumerate(patches):
-                current_patch.set_facecolor(custom_cmap(norm(idx+1)))
-            title = 'Histogram of Sorts'
-            plt.title(title, fontsize=18)
-            savename = pos_savepath + '/hist_of_sorts_pos.png'
-            plt.savefig(savename)
-            plt.close()
-            
-            ## Plot image colored by sort
-            data_out_sort_labels_p = data_out_sort_labels_p.reshape((activation_set_p.shape[1],all_activations_p.shape[2]))
-            plt.figure(figsize=[10,8])
-            plt.imshow(data_out_sort_labels_p,cmap=custom_cmap)
-            plt.axis('off')
-            plt.colorbar()
-            title = 'Image by Sorts'
-            plt.title(title)
-            savename = pos_savepath + '/img_by_sorts_pos.png'
-            plt.savefig(savename)
-            plt.close()
-            
-#            ## Plot each sort, individually
-#            for idx in range(1,len(all_sorts)+1):
-#                plt.figure(figsize=[10,8])
+#        ###########################################################################
+#        ############################## Compute ChI ################################
+#        ###########################################################################
+#    
+#        activation_set_p = all_activations_p[indices,:,:]
+#        
+#        labels_p = np.reshape(gt_img_p,(gt_img_p.shape[0]*gt_img_p.shape[1]))
+#        
+#        data_p = np.zeros((activation_set_p.shape[0],activation_set_p.shape[1]*activation_set_p.shape[2]))
+#        
+#        for idx in range(len(indices)):
+#            data_p[idx,:] = np.reshape(activation_set_p[idx,:,:],(1,activation_set_p[idx,:,:].shape[0]*activation_set_p[idx,:,:].shape[1]))
+#            
+#        print('Computing Fuzzy Measure...')    
+#        
+#        chi = ChoquetIntegral()    
+#        
+#        # train the chi via quadratic program 
+#        chi.train_chi(data_p, labels_p)
+#        fm = chi.fm
+#        
+#        fm_savepath = img_savepath + '/fm'
+#        np.save(fm_savepath, fm)
+#            
+#        fm_file = fm_savepath + '.txt'
+#        ## Save parameters         
+#        with open(fm_file, 'w') as f:
+#            json.dump(fm, f, indent=2)
+#        f.close 
+#            
+#        ###########################################################################
+#        ############################ Print Equations ##############################
+#        ###########################################################################
+#        if (NUM_SOURCES < 7):
+#            eqt_dict = chi.get_linear_eqts()
+#            
+#            ## Save equations
+#            savename = img_savepath + '/chi_equations.txt'
+#            with open(savename, 'w') as f:
+#                json.dump(eqt_dict, f, indent=2)
+#            f.close 
+#            
+#        ###########################################################################
+#        ################################ Test Data ################################
+#        ###########################################################################
+#        print('Testing positive data...')  
+#   
+#        try:
+#            pos_savepath =  img_savepath + '/positive'
+#            os.mkdir(pos_savepath)
+#        except:
+#            pos_savepath =  img_savepath + '/positive'
+#            
+#        
+#        ## Compute ChI at every pixel location
+#        data_out_p = np.zeros((data_p.shape[1]))
+#        data_out_sorts_p = []
+#        data_out_sort_labels_p = np.zeros((data_p.shape[1]))   
+#    
+#        all_sorts = chi.all_sorts
+#        
+#        if (NUM_SOURCES < 7):
+#        
+#            for idx in range(data_p.shape[1]):
+#                data_out_p[idx], data_out_sort_labels_p[idx] = chi.chi_by_sort(data_p[:,idx])         
+#            
+#            ## Define custom colormap
+#            custom_cmap = plt.cm.get_cmap('jet', len(all_sorts))
+#            norm = matplotlib.colors.Normalize(vmin=1,vmax=len(all_sorts))
+#            
+#            ## Plot frequency histogram of sorts for single image
+#            sort_tick_labels = []
+#            for element in all_sorts:
+#                sort_tick_labels.append(str(element))
+#            hist_bins = list(np.arange(0,len(all_sorts)+1)+0.5)
+#            plt.figure(figsize=[10,8])
+#            ax = plt.axes()
+#            plt.xlabel('Sorts', fontsize=14)
+#            plt.ylabel('Count', fontsize=14)
+#            n, bins, patches = plt.hist(data_out_sort_labels_p, bins=hist_bins, align='mid')
+#            plt.xlim([0.5,len(all_sorts)+0.5])
+#            ax.set_xticks(list(np.arange(1,len(all_sorts)+1)))
+#            ax.set_xticklabels(sort_tick_labels,rotation=45,ha='right')
+#            for idx, current_patch in enumerate(patches):
+#                current_patch.set_facecolor(custom_cmap(norm(idx+1)))
+#            title = 'Histogram of Sorts'
+#            plt.title(title, fontsize=18)
+#            savename = pos_savepath + '/hist_of_sorts_pos.png'
+#            plt.savefig(savename)
+#            plt.close()
+#            
+#            ## Plot image colored by sort
+#            data_out_sort_labels_p = data_out_sort_labels_p.reshape((activation_set_p.shape[1],all_activations_p.shape[2]))
+#            plt.figure(figsize=[10,8])
+#            plt.imshow(data_out_sort_labels_p,cmap=custom_cmap)
+#            plt.axis('off')
+#            plt.colorbar()
+#            title = 'Image by Sorts'
+#            plt.title(title)
+#            savename = pos_savepath + '/img_by_sorts_pos.png'
+#            plt.savefig(savename)
+#            plt.close()
+#            
+##            ## Plot each sort, individually
+##            for idx in range(1,len(all_sorts)+1):
+##                plt.figure(figsize=[10,8])
+##                
+##                gt_overlay = np.zeros((gt_img_p.shape[0],gt_img_p.shape[1]))
+##                gt_overlay[np.where(gt_img_p == True)] = 1
+##                plt.imshow(gt_overlay, cmap='gray', alpha=1.0)
+##                
+##                sort_idx = np.where(data_out_sort_labels == idx)
+##                sort_overlay = np.zeros((gt_img_p.shape[0],gt_img_p.shape[1]))
+##                sort_overlay[sort_idx] = idx
+##                plt.imshow(sort_overlay, cmap='plasma', alpha = 0.7)
+##                plt.axis('off')
+##                title = 'Sort: ' + str(all_sorts[idx-1])
+##                plt.title(title, fontsize=16)
+##                savename = img_savepath + '/sort_idx_' + str(idx) + '.png'
+##                plt.savefig(savename)
+##                plt.close()
 #                
-#                gt_overlay = np.zeros((gt_img_p.shape[0],gt_img_p.shape[1]))
-#                gt_overlay[np.where(gt_img_p == True)] = 1
-#                plt.imshow(gt_overlay, cmap='gray', alpha=1.0)
+#        else:
+#            for idx in range(data_p.shape[1]):
+#                data_out_p[idx] = chi.chi_quad(data_p[:,idx])
+#            
+#        ## Normalize ChI output
+#        data_out_p = data_out_p - np.min(data_out_p)
+#        data_out_p = data_out_p / (1e-7 + np.max(data_out_p))
+#        
+#        ###########################################################################
+#        ############################## Compute IoU ################################
+#        ###########################################################################
+#        ## Binarize feature
+#        
+#        gt_img_p = gt_img_p > 0
+#        
+#        try:
+#            img_thresh_p = threshold_otsu(data_out_p)
+#            binary_feature_map_p = data_out_p.reshape((activation_set_p.shape[1],activation_set_p.shape[2])) > img_thresh_p
+#        except:
+#            binary_feature_map_p = data_out_p < 0.1
+#    
+#        ## Compute fitness as IoU to pseudo-groundtruth
+#        intersection = np.logical_and(binary_feature_map_p, gt_img_p)
+#        union = np.logical_or(binary_feature_map_p, gt_img_p)
+#        
+#        try:
+#            iou_score_p = np.sum(intersection) / np.sum(union)
+#        except:
+#            iou_score_p = 0
+#     
+#        ###########################################################################
+#        ######################### Positive Visualizations #########################
+#        ###########################################################################
+#        activation_set_p = all_activations_p[indices,:,:]
+#        
+#        for k in range(activation_set_p.shape[0]):
+#            plt.figure()
+#            plt.imshow(activation_set_p[k,:,:])
+#            plt.axis('off')
+#            title = 'Source idx: ' + str(k+1)
+#            plt.title(title)
+#            
+#            savename = pos_savepath + '/source_idx_' + str(k+1) + '_pos.png'
+#            plt.savefig(savename)
+#            plt.close()
+#    
+#        data_out_p = data_out_p.reshape((activation_set_p.shape[1],activation_set_p.shape[2]))
+#        plt.figure()
+#        plt.imshow(data_out_p)
+#        plt.axis('off')
+#        plt.colorbar()
+#        
+#        title = 'Raw FusionCAM; IoU: ' + str(iou_score_p)
+#        plt.title(title)
+#        
+#        savename = pos_savepath + '/raw_fusioncam_pos.png'
+#            
+#        plt.savefig(savename)
+#        plt.close()
+#
+#        cam_image = show_cam_on_image(image_p, data_out_p, True)
+#        
+#        plt.figure()
+#        plt.imshow(cam_image, cmap='jet')
+#  
+#        title = 'FusionCAM; IoU: ' + str(iou_score_p)
+#        plt.title(title)
+#        plt.axis('off')
+#        
+#        savename = pos_savepath + '/fusioncam_pos.png'
+#            
+#        plt.savefig(savename)
+#        plt.close()
+#
+#        ###########################################################################
+#        ######################### Negative Visualizations #########################
+#        ###########################################################################
+#        
+#        try:
+#            neg_savepath =  img_savepath + '/negative'
+#            os.mkdir(neg_savepath)
+#        except:
+#            neg_savepath =  img_savepath + '/negative'
+#        
+#        activation_set_n = all_activations_n[indices,:,:]
+#        
+#        for k in range(activation_set_n.shape[0]):
+#            plt.figure()
+#            plt.imshow(activation_set_n[k,:,:])
+#            plt.axis('off')
+#            title = 'Source idx: ' + str(k+1)
+#            plt.title(title)
+#            
+#            savename = neg_savepath + '/source_idx_' + str(k+1) + '_neg.png'
+#            plt.savefig(savename)
+#            plt.close()
+#        
+#        data_n = np.zeros((activation_set_n.shape[0],activation_set_n.shape[1]*activation_set_n.shape[2]))
+#        for idx in range(len(indices)):
+#            data_n[idx,:] = np.reshape(activation_set_n[idx,:,:],(1,activation_set_n[idx,:,:].shape[0]*activation_set_n[idx,:,:].shape[1]))
+#        
+#        
+#        print('Testing negative data...')  
+#        
+#        ## Compute ChI at every pixel location     
+#        data_out_n = np.zeros((data_n.shape[1]))
+#        data_out_sorts_n = []
+#        data_out_sort_labels_n = np.zeros((data_n.shape[1]))
+#        
+#        
+#        if (NUM_SOURCES < 7):
+#            
+#            for idx in range(data_n.shape[1]):
+#                data_out_n[idx], data_out_sort_labels_n[idx] = chi.chi_by_sort(data_n[:,idx]) 
+#        
+#        ## Define custom colormap
+#            custom_cmap = plt.cm.get_cmap('jet', len(all_sorts))
+#            norm = matplotlib.colors.Normalize(vmin=1,vmax=len(all_sorts))
+#            
+#            ## Plot frequency histogram of sorts for single image
+#            sort_tick_labels = []
+#            for element in all_sorts:
+#                sort_tick_labels.append(str(element))
+#            plt.figure(figsize=[10,8])
+#            ax = plt.axes()
+#            plt.xlabel('Sorts', fontsize=14)
+#            plt.ylabel('Count', fontsize=14)
+#            n, bins, patches = plt.hist(data_out_sort_labels_n, bins=hist_bins, align='mid')
+#            plt.xlim([0.5,len(all_sorts)+0.5])
+#            ax.set_xticks(list(np.arange(1,len(all_sorts)+1)))
+#            ax.set_xticklabels(sort_tick_labels,rotation=45,ha='right')
+#            for idx, current_patch in enumerate(patches):
+#                current_patch.set_facecolor(custom_cmap(norm(idx+1)))
+#            title = 'Histogram of Sorts'
+#            plt.title(title, fontsize=18)
+#            savename = neg_savepath + '/hist_of_sorts_neg.png'
+#            plt.savefig(savename)
+#            plt.close()
+#            
+#            ## Plot image colored by sort
+#            data_out_sort_labels_n = data_out_sort_labels_n.reshape((activation_set_n.shape[1],activation_set_n.shape[2]))
+#            plt.figure(figsize=[10,8])
+#            plt.imshow(data_out_sort_labels_n,cmap=custom_cmap)
+#            plt.axis('off')
+#            plt.colorbar()
+#            title = 'Image by Sorts'
+#            plt.title(title)
+#            savename = neg_savepath + '/img_by_sorts_neg.png'
+#            plt.savefig(savename)
+#            plt.close()
+#            
+##            ## Plot each sort, individually
+##            for idx in range(1,len(all_sorts)+1):
+##                plt.figure(figsize=[10,8])
+##                
+##                gt_overlay = np.zeros((gt_img_p.shape[0],gt_img_p.shape[1]))
+##                gt_overlay[np.where(gt_img_p == True)] = 1
+##                plt.imshow(gt_overlay, cmap='gray', alpha=1.0)
+##                
+##                sort_idx = np.where(data_out_sort_labels == idx)
+##                sort_overlay = np.zeros((gt_img_p.shape[0],gt_img_p.shape[1]))
+##                sort_overlay[sort_idx] = idx
+##                plt.imshow(sort_overlay, cmap='plasma', alpha = 0.7)
+##                plt.axis('off')
+##                title = 'Sort: ' + str(all_sorts[idx-1])
+##                plt.title(title, fontsize=16)
+##                savename = img_savepath + '/sort_idx_' + str(idx) + '.png'
+##                plt.savefig(savename)
+##                plt.close()
 #                
-#                sort_idx = np.where(data_out_sort_labels == idx)
-#                sort_overlay = np.zeros((gt_img_p.shape[0],gt_img_p.shape[1]))
-#                sort_overlay[sort_idx] = idx
-#                plt.imshow(sort_overlay, cmap='plasma', alpha = 0.7)
-#                plt.axis('off')
-#                title = 'Sort: ' + str(all_sorts[idx-1])
-#                plt.title(title, fontsize=16)
-#                savename = img_savepath + '/sort_idx_' + str(idx) + '.png'
-#                plt.savefig(savename)
-#                plt.close()
-                
-        else:
-            for idx in range(data_p.shape[1]):
-                data_out_p[idx] = chi.chi_quad(data_p[:,idx])
-            
-        ## Normalize ChI output
-        data_out_p = data_out_p - np.min(data_out_p)
-        data_out_p = data_out_p / (1e-7 + np.max(data_out_p))
-        
-        ###########################################################################
-        ############################## Compute IoU ################################
-        ###########################################################################
-        ## Binarize feature
-        
-        gt_img_p = gt_img_p > 0
-        
-        try:
-            img_thresh_p = threshold_otsu(data_out_p)
-            binary_feature_map_p = data_out_p.reshape((activation_set_p.shape[1],activation_set_p.shape[2])) > img_thresh_p
-        except:
-            binary_feature_map_p = data_out_p < 0.1
-    
-        ## Compute fitness as IoU to pseudo-groundtruth
-        intersection = np.logical_and(binary_feature_map_p, gt_img_p)
-        union = np.logical_or(binary_feature_map_p, gt_img_p)
-        
-        try:
-            iou_score_p = np.sum(intersection) / np.sum(union)
-        except:
-            iou_score_p = 0
-     
-        ###########################################################################
-        ######################### Positive Visualizations #########################
-        ###########################################################################
-        activation_set_p = all_activations_p[indices,:,:]
-        
-        for k in range(activation_set_p.shape[0]):
-            plt.figure()
-            plt.imshow(activation_set_p[k,:,:])
-            plt.axis('off')
-            title = 'Source idx: ' + str(k+1)
-            plt.title(title)
-            
-            savename = pos_savepath + '/source_idx_' + str(k+1) + '_pos.png'
-            plt.savefig(savename)
-            plt.close()
-    
-        data_out_p = data_out_p.reshape((activation_set_p.shape[1],activation_set_p.shape[2]))
-        plt.figure()
-        plt.imshow(data_out_p)
-        plt.axis('off')
-        plt.colorbar()
-        
-        title = 'Raw FusionCAM; IoU: ' + str(iou_score_p)
-        plt.title(title)
-        
-        savename = pos_savepath + '/raw_fusioncam_pos.png'
-            
-        plt.savefig(savename)
-        plt.close()
-
-        cam_image = show_cam_on_image(image_p, data_out_p, True)
-        
-        plt.figure()
-        plt.imshow(cam_image, cmap='jet')
-  
-        title = 'FusionCAM; IoU: ' + str(iou_score_p)
-        plt.title(title)
-        plt.axis('off')
-        
-        savename = pos_savepath + '/fusioncam_pos.png'
-            
-        plt.savefig(savename)
-        plt.close()
-
-        ###########################################################################
-        ######################### Negative Visualizations #########################
-        ###########################################################################
-        
-        try:
-            neg_savepath =  img_savepath + '/negative'
-            os.mkdir(neg_savepath)
-        except:
-            neg_savepath =  img_savepath + '/negative'
-        
-        activation_set_n = all_activations_n[indices,:,:]
-        
-        for k in range(activation_set_n.shape[0]):
-            plt.figure()
-            plt.imshow(activation_set_n[k,:,:])
-            plt.axis('off')
-            title = 'Source idx: ' + str(k+1)
-            plt.title(title)
-            
-            savename = neg_savepath + '/source_idx_' + str(k+1) + '_neg.png'
-            plt.savefig(savename)
-            plt.close()
-        
-        data_n = np.zeros((activation_set_n.shape[0],activation_set_n.shape[1]*activation_set_n.shape[2]))
-        for idx in range(len(indices)):
-            data_n[idx,:] = np.reshape(activation_set_n[idx,:,:],(1,activation_set_n[idx,:,:].shape[0]*activation_set_n[idx,:,:].shape[1]))
-        
-        
-        print('Testing negative data...')  
-        
-        ## Compute ChI at every pixel location     
-        data_out_n = np.zeros((data_n.shape[1]))
-        data_out_sorts_n = []
-        data_out_sort_labels_n = np.zeros((data_n.shape[1]))
-        
-        
-        if (NUM_SOURCES < 7):
-            
-            for idx in range(data_n.shape[1]):
-                data_out_n[idx], data_out_sort_labels_n[idx] = chi.chi_by_sort(data_n[:,idx]) 
-        
-        ## Define custom colormap
-            custom_cmap = plt.cm.get_cmap('jet', len(all_sorts))
-            norm = matplotlib.colors.Normalize(vmin=1,vmax=len(all_sorts))
-            
-            ## Plot frequency histogram of sorts for single image
-            sort_tick_labels = []
-            for element in all_sorts:
-                sort_tick_labels.append(str(element))
-            plt.figure(figsize=[10,8])
-            ax = plt.axes()
-            plt.xlabel('Sorts', fontsize=14)
-            plt.ylabel('Count', fontsize=14)
-            n, bins, patches = plt.hist(data_out_sort_labels_n, bins=hist_bins, align='mid')
-            plt.xlim([0.5,len(all_sorts)+0.5])
-            ax.set_xticks(list(np.arange(1,len(all_sorts)+1)))
-            ax.set_xticklabels(sort_tick_labels,rotation=45,ha='right')
-            for idx, current_patch in enumerate(patches):
-                current_patch.set_facecolor(custom_cmap(norm(idx+1)))
-            title = 'Histogram of Sorts'
-            plt.title(title, fontsize=18)
-            savename = neg_savepath + '/hist_of_sorts_neg.png'
-            plt.savefig(savename)
-            plt.close()
-            
-            ## Plot image colored by sort
-            data_out_sort_labels_n = data_out_sort_labels_n.reshape((activation_set_n.shape[1],activation_set_n.shape[2]))
-            plt.figure(figsize=[10,8])
-            plt.imshow(data_out_sort_labels_n,cmap=custom_cmap)
-            plt.axis('off')
-            plt.colorbar()
-            title = 'Image by Sorts'
-            plt.title(title)
-            savename = neg_savepath + '/img_by_sorts_neg.png'
-            plt.savefig(savename)
-            plt.close()
-            
-#            ## Plot each sort, individually
-#            for idx in range(1,len(all_sorts)+1):
-#                plt.figure(figsize=[10,8])
-#                
-#                gt_overlay = np.zeros((gt_img_p.shape[0],gt_img_p.shape[1]))
-#                gt_overlay[np.where(gt_img_p == True)] = 1
-#                plt.imshow(gt_overlay, cmap='gray', alpha=1.0)
-#                
-#                sort_idx = np.where(data_out_sort_labels == idx)
-#                sort_overlay = np.zeros((gt_img_p.shape[0],gt_img_p.shape[1]))
-#                sort_overlay[sort_idx] = idx
-#                plt.imshow(sort_overlay, cmap='plasma', alpha = 0.7)
-#                plt.axis('off')
-#                title = 'Sort: ' + str(all_sorts[idx-1])
-#                plt.title(title, fontsize=16)
-#                savename = img_savepath + '/sort_idx_' + str(idx) + '.png'
-#                plt.savefig(savename)
-#                plt.close()
-                
-        else:
-            for idx in range(data_p.shape[1]):
-                data_out_n[idx] = chi.chi_quad(data_n[:,idx])
-            
-        ## Normalize ChI output    
-        data_out_n = data_out_n - np.min(data_out_n)
-        data_out_n = data_out_n / (1e-7 + np.max(data_out_n))
-        
-        ## Binarize feature
-        gt_img_n = gt_img_n > 0
-            
-        try:
-            img_thresh_n = threshold_otsu(data_out_n)
-            binary_feature_map_n = data_out_n.reshape((activation_set_n.shape[1],activation_set_n.shape[2])) > img_thresh_n
-        except:
-            binary_feature_map_n = data_out_p < 0.1
-    
-        ## Compute fitness as IoU to pseudo-groundtruth
-        intersection = np.logical_and(binary_feature_map_n, gt_img_n)
-        union = np.logical_or(binary_feature_map_n, gt_img_n)
-        
-        try:
-            iou_score_n = np.sum(intersection) / np.sum(union)
-        except:
-            iou_score_n = 0
-        
-        data_out_n = data_out_n.reshape((activation_set_n.shape[1],activation_set_n.shape[2]))
-        plt.figure()
-        plt.imshow(data_out_n)
-        plt.axis('off')
-        plt.colorbar()
-        
-        title = 'Raw FusionCAM; IoU: ' + str(iou_score_n)
-        plt.title(title)
-        
-        savename = neg_savepath + '/raw_fusioncam_neg.png'
-            
-        plt.savefig(savename)
-        plt.close()
-        
-        cam_image = show_cam_on_image(image_n, data_out_n, True)
-        
-        plt.figure()
-        plt.imshow(cam_image, cmap='jet')
-        title = 'FusionCAM; IoU: ' + str(iou_score_n)
-        plt.title(title)
-        plt.axis('off')
-        
-        savename = neg_savepath + '/fusioncam_neg.png'
-            
-        plt.savefig(savename)
-        plt.close()
+#        else:
+#            for idx in range(data_p.shape[1]):
+#                data_out_n[idx] = chi.chi_quad(data_n[:,idx])
+#            
+#        ## Normalize ChI output    
+#        data_out_n = data_out_n - np.min(data_out_n)
+#        data_out_n = data_out_n / (1e-7 + np.max(data_out_n))
+#        
+#        ## Binarize feature
+#        gt_img_n = gt_img_n > 0
+#            
+#        try:
+#            img_thresh_n = threshold_otsu(data_out_n)
+#            binary_feature_map_n = data_out_n.reshape((activation_set_n.shape[1],activation_set_n.shape[2])) > img_thresh_n
+#        except:
+#            binary_feature_map_n = data_out_p < 0.1
+#    
+#        ## Compute fitness as IoU to pseudo-groundtruth
+#        intersection = np.logical_and(binary_feature_map_n, gt_img_n)
+#        union = np.logical_or(binary_feature_map_n, gt_img_n)
+#        
+#        try:
+#            iou_score_n = np.sum(intersection) / np.sum(union)
+#        except:
+#            iou_score_n = 0
+#        
+#        data_out_n = data_out_n.reshape((activation_set_n.shape[1],activation_set_n.shape[2]))
+#        plt.figure()
+#        plt.imshow(data_out_n)
+#        plt.axis('off')
+#        plt.colorbar()
+#        
+#        title = 'Raw FusionCAM; IoU: ' + str(iou_score_n)
+#        plt.title(title)
+#        
+#        savename = neg_savepath + '/raw_fusioncam_neg.png'
+#            
+#        plt.savefig(savename)
+#        plt.close()
+#        
+#        cam_image = show_cam_on_image(image_n, data_out_n, True)
+#        
+#        plt.figure()
+#        plt.imshow(cam_image, cmap='jet')
+#        title = 'FusionCAM; IoU: ' + str(iou_score_n)
+#        plt.title(title)
+#        plt.axis('off')
+#        
+#        savename = neg_savepath + '/fusioncam_neg.png'
+#            
+#        plt.savefig(savename)
+#        plt.close()
     
 
     
