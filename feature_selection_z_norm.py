@@ -283,7 +283,7 @@ if __name__== "__main__":
     
     if (parameters.model == 'vgg16'):
         for layer_idx in parameters.layers:
-            activation_models[str(layer_idx)] = OutputScoreCAMZNorm(model=model, target_layers=[model.features[layer_idx]], use_cuda=parameters.cuda, norm_by_layer=False)
+            activation_models[str(layer_idx)] = OutputScoreCAMZNorm(model=model, target_layers=[model.features[layer_idx]], use_cuda=parameters.cuda, norm_by_layer=True)
 
     target_category = None
     

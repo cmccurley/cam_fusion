@@ -13,3 +13,12 @@
 *.db
 .DS_store
 *.zip
+*.m
+*.mat
+*.pdf
+*.md
+MICI-master/
+mnist/
+pascal/
+cifar10/
+dsiac/

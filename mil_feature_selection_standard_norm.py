@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
+Created on Tue Apr 12 17:36:26 2022
+
+@author: cmccurley
+"""
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
 Created on Wed Feb 16 09:51:05 2022
 
 @author: cmccurley
@@ -69,7 +77,7 @@ from feature_selection_utilities import dask_select_features_divergence_pos_and_
 import numpy as np
 #from cam_functions import GradCAM, LayerCAM, ScoreCAM, GradCAMPlusPlus, AblationCAM, EigenCAM
 from cam_functions.utils.image import show_cam_on_image, preprocess_image
-from cam_functions import ActivationCAM, OutputScoreCAM
+from cam_functions import ActivationCAM, OutputScoreCAMZNorm
 from cm_choquet_integral import ChoquetIntegral
 
 torch.manual_seed(24)
@@ -227,11 +235,10 @@ if __name__== "__main__":
         test_loader = torch.utils.data.DataLoader(testset, batch_size=parameters.BATCH_SIZE, shuffle=True, pin_memory=False)
         valid_loader = torch.utils.data.DataLoader(validset, batch_size=parameters.BATCH_SIZE, shuffle=True, pin_memory=False) 
         
-        parameters.mnist_target_class = 8
-        parameters.mnist_background_class = 3
+        parameters.mnist_target_class = 7
+        parameters.mnist_background_class = 1
         
-        target_class = 8
-        background_class = 3
+        target_class = 7
 
     ## Define files to save epoch training/validation
     logfilename = parameters.outf + parameters.loss_file
@@ -273,7 +280,7 @@ if __name__== "__main__":
     
     if (parameters.model == 'vgg16'):
         for layer_idx in parameters.layers:
-            activation_models[str(layer_idx)] = OutputScoreCAM(model=model, target_layers=[model.features[layer_idx]], use_cuda=parameters.cuda)
+            activation_models[str(layer_idx)] = OutputScoreCAMZNorm(model=model, target_layers=[model.features[layer_idx]], use_cuda=parameters.cuda, norm_by_layer=True)
 
     target_category = None
     
@@ -283,7 +290,7 @@ if __name__== "__main__":
 ############################# Sorting Analysis ################################
 ###############################################################################
     
-    new_save_path =  '/mil_selection_kl_divergence_pos_from_neg_with_inverted_stage_1_8_vs_3_min_max'
+    new_save_path =  '/mil_selection_kl_divergence_pos_from_neg_with_inverted_stage_1_7_vs_1_standard_norm'
 #    new_save_path =  '/mil_selection_js_divergence'
     parameters.feature_class = 'target'
     
@@ -615,7 +622,7 @@ if __name__== "__main__":
     ############################## Compute ChI ################################
     ###########################################################################
     NUM_SOURCES = 4
-    indices = [76, 108, 115, 114]
+    indices = [108,25,2,106]
     
     dask_data_p = sub_activations_p[indices,:]
     dask_labels_p = dask_gt_p.reshape((dask_gt_p.shape[0], dask_gt_p.shape[1]*dask_gt_p.shape[2]))
@@ -1223,8 +1230,7 @@ if __name__== "__main__":
         
         if sample_idx > 20:
             break        
-                
-                
-                
-            
+
+
+    
     

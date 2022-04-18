@@ -118,7 +118,8 @@ class OutputScoreCAM:
             scores = []
             for batch_index, tensor in enumerate(input_tensors):
                 category = target_category[batch_index]
-                for i in tqdm.tqdm(range(0, tensor.size(0), BATCH_SIZE)):
+#                for i in tqdm.tqdm(range(0, tensor.size(0), BATCH_SIZE)):
+                for i in range(0, tensor.size(0), BATCH_SIZE):
                     batch = tensor[i: i + BATCH_SIZE, :]
                     outputs = self.model(batch).cpu().numpy()[:, category]
                     scores.extend(outputs)
