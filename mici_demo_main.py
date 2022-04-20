@@ -39,17 +39,14 @@ def warn(*args, **kwargs):
 import warnings
 warnings.warn = warn
 
-
 ## General packages
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.io as io
 
-
 ## Custom packages
-
-from cm_MICI import [set_parameters, learnCIMeasure_softmax, 
-                     computeCI, learnCIMeasure_softmax, evalFitness_softmax]
+from cm_MICI.learnCIMeasureParams import set_parameters
+from cm_MICI.util.cm_mi_choquet_integral import MIChoquetIntegral
 
 """
 %=====================================================================
@@ -73,18 +70,21 @@ if __name__== "__main__":
     
     ## Load the demo data
     data = io.loadmat('./cm_MICI/demo_data_cl.mat')
-    Bags = data['Bags']
-    Labels = data['Labels']
-    gtrue = data['gtrue']
+    Bags = data['Bags'][0,:]
+    Labels = data['Labels'][0,:]
+    gtrue = data['gtrue'][0,:]
     X = data['X']
     
     ######################################################################
     ########################## Training Stage ############################
     ######################################################################
     
-    ## Training Stage: Learn measures given training bags and labels
-    measure_genmean, initialMeasure_genmean, Analysis_genmean = learnCIMeasure_softmax(Bags, Labels, Parameters) ## generalized-mean model
-#    
+    chi_genmean = MIChoquetIntegral()
+    
+    # Training Stage: Learn measures given training bags and labels
+#    measure_genmean, initialMeasure_genmean, Analysis_genmean = chi_genmean.train_chi_softmax(Bags, Labels, Parameters) ## generalized-mean model
+    chi_genmean.train_chi_softmax(Bags, Labels, Parameters) ## generalized-mean model
+    
 #    ######################################################################
 #    ########################## Testing Stage #############################
 #    ######################################################################
@@ -99,9 +99,11 @@ if __name__== "__main__":
 #    ######################################################################
 #
 #    ## Plot true and estimated labels
-#    plt.figure(101)
-#    subplot(1,2,1);scatter(X(:,1),X(:,2),[],Ytrue);title('True Labels');
-#    subplot(1,2,2);scatter(X(:,1),X(:,2),[],Yestimate_genmean);title('Fusion result: MICI noisy-or')
+#    fig, ax = plt.subplots(1,2)
+#    ax[0].scatter(X[:,0],X[:,1],c=Ytrue)
+#    ax[0].set_title('True Labels')
+#    ax[1].scatter(X[:,0],X[:,1],c=Yestimate_genmean)
+#    ax[1].set_title('Fusion result: MICI generalized-mean')
     
     
     

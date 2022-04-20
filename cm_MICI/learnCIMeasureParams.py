@@ -61,8 +61,6 @@ def set_parameters(args):
     
     parser = argparse.ArgumentParser(description='Parameters for the Multiple Instance Choquet Integral.')
     
-    parser.add_argument('--run_mode', help='Mode to train, test, or compute CAMS. (cam)', default='cam', type=str)
-    
     ######################################################################
     ######################### Input Parameters ###########################
     ######################################################################
