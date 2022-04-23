@@ -11,3 +11,4 @@ from cam_functions.guided_backprop import GuidedBackpropReLUModel
 from cam_functions.cm_activation_cam import ActivationCAM
 from cam_functions.cm_output_score_cam import OutputScoreCAM
 from cam_functions.cm_output_score_cam_z_norm import OutputScoreCAMZNorm
+from cam_functions.cm_output_score_cam_whitening_norm import OutputScoreCAMWhiteningNorm

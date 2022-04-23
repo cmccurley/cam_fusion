@@ -29,6 +29,7 @@ Created on Thu Jan 20 16:52:06 2022
 import math
 import numpy as np
 import itertools
+from scipy.special import erfinv, erfc
 
 ######################################################################
 ####################### Function Definitions #########################
@@ -243,6 +244,389 @@ class MIChoquetIntegral:
         ################## Compute Initial Measure Width Bounds ###############
         #######################################################################
         
+        ## Get measure indices for lower and upper bounds on each measure element
+        lowerindex, upperindex = self.compute_bounds()
+
+        #######################################################################
+        ###################### Initialize Measure Elements ####################
+        #######################################################################
+        
+        ## Initialize measure population
+        measurePop = np.zeros((nPop,nElements))
+        
+        ## Initialize fitness
+        fitnessPop = -1e100*np.ones(nPop) ## Very small number, bad fitness
+        
+        ## Initialize measure population with input measures
+        if (trueInitMeasure is not None): 
+            for i in range(nPop):
+                measurePop[i,:] = trueInitMeasure
+                fitnessPop[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
+            
+        else:  ## Initialize measure population randomly
+            for i in range(nPop):
+                measurePop[i,:] = self.sampleMeasure(nSources,lowerindex,upperindex);
+                fitnessPop[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
+        
+        #######################################################################
+        #################### Iterate through Optimization #####################
+        #######################################################################
+        
+        indx = np.argmax(fitnessPop)
+        mVal = fitnessPop[indx]
+        measure = measurePop[indx,:]  
+        initialMeasure = measure
+        mVal_before = -10000
+        
+        for t in range(Parameters.maxIterations):
+            childMeasure = measurePop
+            childFitness = np.zeros(nPop) ## Pre-allocate array
+            subsetIntervalnPop = np.zeros((nPop,nElements-1)) ## Dont need to sample mu_all=1 (last element)
+            ElemIdxUpdated = np.zeros(nPop)
+            JumpType = np.zeros(nPop)
+            for i in range(nPop):
+                subsetInterval = self.evalInterval(measurePop[i,:], lowerindex, upperindex)
+                subsetIntervalnPop[i,:] = subsetInterval
+                
+                ## Sample new value(s)
+                z = np.random.uniform(low=0,high=1)
+                if(z < eta): ## Small-scale mutation: update only one element of the measure
+                    iinterv = self.sampleMultinomial_mat(subsetInterval, 1, 'descend' ) ## Update the one interval according to multinomial
+                    childMeasure[i,:] = self.sampleMeasure(nSources, lowerindex, upperindex, childMeasure[i,:],iinterv, sampleVar)
+                    childFitness[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
+                    JumpType[i] = 1
+                    ElemIdxUpdated[i] = iinterv
+                else: ## Large-scale mutation: update all measure elements sort by valid interval widths in descending order
+                    indx_subsetInterval = (-subsetInterval).argsort(axis=1) ## sort the intervals in descending order
+      
+                    for iinterv in range(indx_subsetInterval.shape[1]): ## for all elements
+                        childMeasure[i,:] =  self.sampleMeasure(nSources, lowerindex, upperindex, childMeasure[i,:],iinterv, sampleVar)
+                        childFitness[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
+                        JumpType[i] = 2
+    
+#            ###################################################################
+#            ###################### Evolutionary Algorithm #####################
+#            ###################################################################
+#            """
+#            ===================================================================
+#            % Example: Say population size is P. Both P parent and P child are 
+#            % pooled together (size 2P) and sort by fitness, then, P/2 measures
+#            % with top 25% of the fitness are kept; The remaining P/2 child 
+#            % comes from the remaining 75% of the pool by sampling from a 
+#            % multinomial distribution).
+#            ===================================================================
+#            """
+#            
+#            """
+#            Create parent + child measure pool (2P)
+#            """
+#            fitnessPopPrev = fitnessPop
+#            ParentChildMeasure = np.concatenate((measurePop,childMeasure),axis=0) ## total 2xNPop measures
+#            ParentChildFitness = np.concatenate((fitnessPop,childFitness))
+#            
+#            ## Sort fitness values in descending order
+#            ParentChildFitness_sortIdx = (-ParentChildFitness).argsort()
+#            ParentChildFitness_sortV = ParentChildFitness[ParentChildFitness_sortIdx]
+#            
+#            """
+#            Keep top 25% (P/2) from parent and child populations
+#            """
+#            measurePopNext = np.zeros((nPop,ParentChildMeasure.shape[1]))
+#            fitnessPopNext = np.zeros(nPop)
+#            ParentChildTmpIdx1 = ParentChildFitness_sortIdx[0:nPop/2] 
+#            measurePopNext[0:nPop/2,:] = ParentChildMeasure[ParentChildTmpIdx1,:]
+#            fitnessPopNext[0:nPop/2] = ParentChildFitness[ParentChildTmpIdx1]
+#            
+#            """
+#            For the remaining (P/2) measures, sample according to multinomial 
+#            from remaining 75% of parent/child pool
+#            """
+#            ## Method 1: Random sample - Correct but not used in the paper
+#            # ParentChildTmpIdx2 = randsample(ParentChildFitness_sortIdx(Parameters.nPop/2+1:end),Parameters.nPop/2);
+#            
+#            ## Method 2: Sample by multinomial distribution based on fitness
+#            PDFdistr75 = ParentChildFitness_sortV[nPop/2::]
+#            outputIndexccc = self.sampleMultinomial_mat(PDFdistr75, nPop/2, 'descend')
+#            
+#            ParentChildTmpIdx2 = ParentChildFitness_sortIdx[nPop/2+outputIndexccc]
+#            measurePopNext[nPop/2:nPop,:] = ParentChildMeasure[ParentChildTmpIdx2,:]
+#            fitnessPopNext[nPop/2:nPop] = ParentChildFitness[ParentChildTmpIdx2]
+#            
+#            Idxrp = np.random.permutation(nPop); ## randomly change the order of the population
+#            measurePop = measurePopNext[Idxrp,:]
+#            fitnessPop = fitnessPopNext[Idxrp]
+#            
+#            a = np.minimum(1, np.exp(np.sum(fitnessPop)-np.sum(fitnessPopPrev))) ## fitness change ratio
+#            ParentChildTmpIdxall = np.concatenate((ParentChildTmpIdx1, ParentChildTmpIdx2))
+#            achild = np.sum(ParentChildTmpIdxall > nPop)/nPop ## Percentage of children were kept for the next iteration
+#            
+#            ## Update best answer - printed to the terminal
+#            if(np.max(fitnessPop) > mVal):
+#                mVal_before = mVal
+#                mIdx = (-fitnessPop).argsort()[0]
+#                mVal = fitnessPop[mIdx]
+#                measure = measurePop[mIdx,:]
+#                print(f'{mVal}')
+#                print(measure)
+#            
+#            ###################################################################
+#            ##################### Update Analysis Tracker #####################
+#            ###################################################################
+#            if (Parameters.analysis == True): ## record all intermediate process (be aware of the possible memory limit!)
+#                Analysis['ParentChildMeasure'][:,:,t] = ParentChildMeasure
+#                Analysis['ParentChildFitness'][t,:] = ParentChildFitness
+#                Analysis['ParentChildTmpIdx2'][t,:] = ParentChildTmpIdx2
+#                Analysis['Idxrp'][t,:] = Idxrp
+#                Analysis['measurePop'][:,:,t] = measurePop
+#                Analysis['fitnessPop'][t,:] = fitnessPop
+#                Analysis['measureiter'][t,:] = measure
+#                Analysis['ratioa'][t] = a
+#                Analysis['ratioachild'][t] = achild
+#                Analysis['ratiomVal'][t] = mVal
+#                Analysis['ratio'][t] = exp(sum(fitnessPop)-sum(fitnessPopPrev))
+#                Analysis['JumpType'][t,:] = JumpType
+#                Analysis['ElemIdxUpdated'][t,:] = ElemIdxUpdated
+#                Analysis['subsetIntervalnPop'][:,:,t] = subsetIntervalnPop  
+#            
+#            ## Update terminal 
+#            if(not(t % 10)):
+#                print(f'Iteration: {str(t)}')
+#    
+#                ## Stop if we've found a measure meeting our desired level of fitness
+#                if (np.abs(mVal - mVal_before) <= Parameters.fitnessThresh):
+#                    break
+#    
+#        return measure, initialMeasure, Analysis
+    
+    def evalFitness_softmax(self, Bags, Labels, measure):
+    
+        """
+        ===========================================================================
+        % Evaluate the fitness a measure, similar to evalFitness_minmax() for
+        % classification but uses generalized mean (sometimes also named "softmax") model
+        %
+        % INPUT
+        %    Labels         - 1xNumTrainBags double  - Training labels for each bag
+        %    measure        - measure to be evaluated after update
+        %    nPntsBags      - 1xNumTrainBags double    - number of points in each bag
+        %    bag_row_ids    - the row indices of measure used for each bag
+        %    diffM          - Precompute differences for each bag
+        %
+        % OUTPUT
+        %   fitness         - the fitness value using min(sum(min((ci-d)^2))) for regression.
+        %
+        % Written by: X. Du 03/2018
+        %
+        ===========================================================================
+        """
+        
+        p1 = self.p[0]
+        p2 = self.p[1]
+        
+        fitness = 0
+       
+        ## Compute CI for non-singleton bags
+        for b_idx in range(self.B):
+            ci = self.compute_chi(Bags[b_idx])
+            if(Labels[b_idx] == 0):  ## Negative bag, label = 0
+                fitness = fitness - (np.mean(np.power(ci,(2*p1))))^(1/p1)
+            else: ## Positive bag, label=1
+                fitness = fitness - (np.mean(np.power((ci-1),(2*p2))))^(1/p2)
+    
+            ## Sanity check
+            if (np.isinf(fitness) or not(np.isreal(fitness)) or np.isnan(fitness)):
+                fitness = np.real(fitness)
+                fitness = -10000000
+                
+        return fitness
+    
+    def sampleMeasure(self, nSources, lowerindex, upperindex,  prevSample=None, IndexsubsetToChange=None, sampleVar=None):
+        """
+        ===========================================================================
+        %sampleMeasure - sampling a new measure
+        % If the number of inputs are two, sampling a brand new measure (only used during initialization)
+        % If the number of inputs are all five, sampling a new value for only one element of the measure
+        % This code samples a new measure value from truncated Gaussian distribution.
+        %
+        % INPUT
+        %   nSources - number of sources
+        %   lowerindex - the cell that stores all the corresponding subsets (lower index) of measure elements
+        %   upperindex - the cell that stores all the corresponding supersets (upper index) of measure elements
+        %   prevSample (optional)- previous measure, before update
+        %   IndexsubsetToChange (optional)- the measure element index to be updated
+        %   sampleVar (optional) - sampleVar set in Parameters
+        % OUTPUT
+        %   - measure - new measure after update
+        %
+        ===========================================================================
+        """
+    
+        if(prevSample == None):
+            """
+            ## Sample a brand new measure
+            ## Flip a coin to decide whether to sample from above or sample from bottom
+            ## Sample new measure, prior is uniform/no prior
+            """
+            z = np.random.uniform(low=0,high=1)
+            if (z >= 0.5): ## sample from bottom-up
+                measure = self.sampleMeasure_Bottom(nSources,lowerindex)
+            else:   ## sample from top-down
+                measure = self.sampleMeasure_Above(nSources,upperindex)
+        else:
+            ## Sample just one new element of measure
+            
+            nElements = self.N
+            measure = prevSample
+            if ((IndexsubsetToChange<=nSources) and (IndexsubsetToChange>=0)): ## singleton
+                lowerBound = 0
+                upperBound = np.amin(measure[upperindex[IndexsubsetToChange]])
+            elif ((IndexsubsetToChange>=(nElements-nSources)) and (IndexsubsetToChange<=(nElements-1))): ## (nSources-1)-tuple
+                lowerBound = np.amax(measure[lowerindex[IndexsubsetToChange]])
+                upperBound = 1
+            else:  ## remaining elements
+                lowerBound = np.amax(measure[lowerindex[IndexsubsetToChange]]) 
+                upperBound = np.amin(measure[upperindex[IndexsubsetToChange]]) 
+            
+            denom = upperBound - lowerBound
+            v_bar = sampleVar/((denom**2)+1e-5) ## -changed
+            x_bar = measure[IndexsubsetToChange]; ## -changed
+            
+            ## Sample from a Truncated Gaussian
+            sigma_bar = np.sqrt(v_bar)
+            c2 = np.random.uniform(low=0,high=1) ## Randomly generate a value between [0,1]
+            val = self.invcdf_TruncatedGaussian (c2,x_bar,sigma_bar,lowerBound,upperBound) ## New measure element value
+            measure[IndexsubsetToChange] = val  ## New measure element value
+    
+        return measure
+    
+    def sampleMeasure_Above(self, nSources,upperindex):
+        """
+        =======================================================================
+        %sampleMeasure_Above - sampling a new measure from "top-down"
+        % The order of sampling a brand new measure is to first sample (nSource-1)-tuples (e.g. g_1234 for 5-source),
+        % then (nSource-2)-tuples (e.g. g_123), and so on until singletons (g_1)
+        % Notice it will satisfy monotonicity!
+        %
+        % INPUT
+        %   nSources - number of sources
+        %   upperindex - the cell that stores all the corresponding supersets (upper index) of measure elements
+        %
+        % OUTPUT
+        %   - measure - new measure after update
+        %
+        =======================================================================
+        """
+        
+        ## Sample new measure, prior is uniform/no prior
+        nElements = self.nElements  ## total length of measure
+        nSources = self.N ## Number of sources
+        measure = np.zeros(nElements)
+        measure[-1] = 1 ## mu_all
+        measure[nElements-2:nElements-nSources-2:-1] = np.random.uniform(low=0,high=1,size=nSources) ## mu_1234,1235,1245,1345,2345 for 5 sources, for example (second to last tier)
+        
+        for j in range(nElements-nSources-2,-1,-1):
+            upperBound = np.amin(measure[upperindex[j]]) ## upper bound
+            measure[j] = 0 + (upperBound - 0)*np.random.uniform(low=0,high=1)
+            
+        return measure
+    
+    def sampleMeasure_Bottom(self,nSources,lowerindex):
+        """
+        =======================================================================
+        %sampleMeasure_Bottom - sampling a new measure from "bottom-up"
+        % The order of sampling a brand new measure is to first sample singleton (e.g. g_1..),
+        % then duplets (e.g. g_12..), then triples (e.g. g_123..), etc..
+        % Notice it will satisfy monotonicity!
+        %
+        % INPUT
+        %   nSources - number of sources
+        %   lowerindex - the cell that stores all the corresponding subsets (lower index) of measure elements
+        %
+        % OUTPUT
+        %   - measure - new measure after update
+        %
+        =======================================================================
+        """
+        
+        nElements = self.nElements  ## total length of measure
+        nSources = self.N ## Number of sources
+        measure = np.zeros(nElements)
+        measure[0:nSources] = np.random.uniform(low=0,high=1,size=nSources) ## sample singleton densities
+        measure[-1] = 1 ## mu_all
+        
+        for j in range(nSources,(len(measure)-1)):
+            lowerBound = np.amax(measure[lowerindex[j]]) ## lower bound     
+            measure[j] = lowerBound + (1-lowerBound)*np.random.uniform(low=0,high=1)
+        
+        return measure
+    
+    
+#    def evalInterval(self, measure, lowerindex, upperindex):
+#        """
+#        =======================================================================
+#        % Evaluate the valid interval width of a measure, then sort in descending order.
+#        %
+#        % INPUT
+#        %   measure -  measure to be evaluated after update
+#        %   lowerindex - the cell that stores all the corresponding subsets (lower index) of measure elements
+#        %   upperindex - the cell that stores all the corresponding supersets (upper index) of measure elements
+#        % OUTPUT
+#        %   subsetInterval - the valid interval widths for the measure elements,before sorting by value
+#        %
+#        =======================================================================
+#        """
+#        
+#        nElements = self.nElements 
+#        nSources = self.N
+#        lb = np.zeros(nElements-1)
+#        ub = np.zeros(nElements-1)
+#        
+#        for j in range(nSources)  ## singleton
+#            lb[j] = 0 ## lower bound
+#            ub[j] = min(measure(upperindex{j})); ## upper bound
+#    
+#        for j in range(nSources, nElements-nSources-1):
+#            lb[j] = max(measure(lowerindex{j})); ## lower bound
+#            ub[j] = min(measure(upperindex{j})); ## upper bound
+#        
+#        for j in range(nElements-nSources,nElements-1)
+#            lb[j] = max(measure(lowerindex{j})) ## lower bound
+#            ub[j] = 1 ## upper bound
+#            
+#        subsetInterval = ub - lb   
+#        
+#        return subsetInterval
+    
+    def compute_bounds(self):
+        
+        """ 
+        ===============================================================================
+        %% compute_bounds()
+        % This function learns a fuzzy measure for Multiple Instance Choquet Integral (MICI)
+        % This function works with classifier fusion
+        % This function uses a generalized-mean objective function and an evolutionary algorithm to optimize.
+        %
+        % INPUT
+        %    Parameters                 - 1x1 struct - The parameters set by learnCIMeasureParams() function.
+        %
+        % OUTPUT
+        %    measure             - 1x(2^nSource-1) double - learned measure by MICI
+        %
+        ===============================================================================
+        """
+        
+        #######################################################################
+        ########################### Set Up Variables ##########################
+        #######################################################################
+        nElements = self.nElements ## Number of elements in a measure, includining mu_all=1
+        measureNumEach = self.measureNumEach
+        measureEach = self.measureEach
+        index_keys = self.index_keys
+        nSources = self.N
+        
+        #######################################################################
+        ################## Compute Initial Measure Width Bounds ###############
+        #######################################################################
         ## Compute lower bound index (Lower bound is largest value of it's subsets)
         nElem_prev = 0
         nElem_prev_prev = 0
@@ -276,419 +660,116 @@ class MIChoquetIntegral:
                 lowerindex.append(tmp_ind) 
                 
         lowerindex.append([-1])
-                
+
         ## Compute upper bound index (Upper bound is smallest value of it's supersets)
         upperindex = [] ## Indices of elements used for upper bounds of each element
-        upperindex.append([-1])
         tmp_ind = []
         
-        nElem_tier2 = measureNumEach[-2]
-        for i in range(nElem_tier2):
-            upperindex.append([nElements])
-        
-        nElem_nextsum = nElements
-        for i in range(nSources-2,0,-1):
+        for i in range(0,nSources-1): ## Loop through tiers
             nElem = measureNumEach[i] 
             elem = measureEach[i]
+            elem_next_ind = i+1
+            elem_next = measureEach[elem_next_ind]
             
-            elem_next_ind = i-1
-            elem_next = measureEach[i-1]
-            nElem_next = measureNumEach[i-1]
-            
-            for j in range(nElem-1,-1,-1): ## work from last element to first
-                parent = elem[j,:]
-                for idk, child in enumerate(elem_next):
-                    
-                    ## Test if child is a subest of parent
-                    mask = np.in1d(child,parent)
-                    
-                    if(elem_next_ind == 0):
-                        if (np.sum(mask) == 1):
-                            
-                            try:
-                                if (len(child) > 1):
-                                    child = child.tolist()
-                            except:
-                                newchild = [child]
-                                child = newchild
-                            
-                            if not(idk):
-                                tmp_ind = [index_keys[str(child)]]
-                            else:
-                                tmp_ind = tmp_ind + [index_keys[str(child)]]
-                    
-                    elif(np.sum(mask) == len(child)):
-                        
-                        try:
-                            if (len(child) > 1):
-                                child = child.tolist()
-                        except:
-                            newchild = [child]
-                            child = newchild
-                        
-                        if not(idk):
-                            tmp_ind = [index_keys[str(child)]]
-                        else:
-                            tmp_ind = tmp_ind + [index_keys[str(child)]]
+            for j, child in enumerate(elem): ## work from last element to first
+                tmp_ind = []
                 
-                upperindex.append(tmp_ind) 
-        upperindex = upperindex[::-1]
-            
-        #######################################################################
-        ###################### Initialize Measure Elements ####################
-        #######################################################################
+                if(not(i==(nSources-2))):
+                
+                    for idk, parent in enumerate(elem_next):
+                        
+                        ## Test if child is a subest of parent
+                        mask = np.in1d(child,parent)
+                        
+                        if(i == 0): ## If singleton level
+                            if (np.sum(mask) == 1):
+                                
+                                if not(len(tmp_ind)):
+                                    tmp_ind = [index_keys[str(parent)]]
+                                else:
+                                    tmp_ind = tmp_ind + [index_keys[str(parent)]]
+                        
+                        elif(np.sum(mask) == len(child)):  ## If level above singletons
+                            
+                            if not(len(tmp_ind)):
+                                tmp_ind = [index_keys[str(parent)]]
+                            else:
+                                tmp_ind = tmp_ind + [index_keys[str(parent)]]
+                    
+                    upperindex.append(tmp_ind) 
+                
+                else:
+                    upperindex.append([nElements])
+                
+        upperindex.append([-1])
         
-        ## Initialize measure population
-        measurePop = np.zeros((nPop,nElements))
-##        
-##        ## Initialize fitness
-##        fitnessPop = -1e100*np.ones(nPop) ## Very small number, bad fitness
-##        
-##        ## Initialize measure population with input measures
-##        if (trueInitMeasure is not None): 
-##            for i in range(nPop):
-##                measurePop[i,:] = trueInitMeasure
-##                fitnessPop[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
-##            
-##        else:  ## Initialize measure population randomly
-##            for i in range(nPop):
-##                measurePop[i,:] = self.sampleMeasure(nSources,lowerindex,upperindex);
-##                fitnessPop[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
-##        
-##        #######################################################################
-##        #################### Iterate through Optimization #####################
-##        #######################################################################
-##        
-##        indx = np.argmax(fitnessPop)
-##        mVal = fitnessPop[indx]
-##        measure = measurePop[indx,:]  
-##        initialMeasure = measure
-##        mVal_before = -10000
-##        
-##        for t in range(Parameters.maxIterations):
-##            childMeasure = measurePop
-##            childFitness = np.zeros(nPop) ## Pre-allocate array
-##            subsetIntervalnPop = np.zeros((nPop,nElements-1)) ## Dont need to sample mu_all=1 (last element)
-##            ElemIdxUpdated = np.zeros(nPop)
-##            JumpType = np.zeros(nPop)
-##            for i in range(nPop):
-##                subsetInterval = self.evalInterval(measurePop[i,:], lowerindex, upperindex)
-##                subsetIntervalnPop[i,:] = subsetInterval
-##                
-##                ## Sample new value(s)
-##                z = np.random.uniform(low=0,high=1)
-##                if(z < eta): ## Small-scale mutation: update only one element of the measure
-##                    iinterv = self.sampleMultinomial_mat(subsetInterval, 1, 'descend' ) ## Update the one interval according to multinomial
-##                    childMeasure[i,:] = self.sampleMeasure(nSources, lowerindex, upperindex, childMeasure[i,:],iinterv, sampleVar)
-##                    childFitness[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
-##                    JumpType[i] = 1
-##                    ElemIdxUpdated[i] = iinterv
-##                else: ## Large-scale mutation: update all measure elements sort by valid interval widths in descending order
-##                    indx_subsetInterval = (-subsetInterval).argsort(axis=1) ## sort the intervals in descending order
-##      
-##                    for iinterv in range(indx_subsetInterval.shape[1]): ## for all elements
-##                        childMeasure[i,:] =  self.sampleMeasure(nSources, lowerindex, upperindex, childMeasure[i,:],iinterv, sampleVar)
-##                        childFitness[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
-##                        JumpType[i] = 2
-##    
-##            ###################################################################
-##            ###################### Evolutionary Algorithm #####################
-##            ###################################################################
-##            """
-##            ===================================================================
-##            % Example: Say population size is P. Both P parent and P child are 
-##            % pooled together (size 2P) and sort by fitness, then, P/2 measures
-##            % with top 25% of the fitness are kept; The remaining P/2 child 
-##            % comes from the remaining 75% of the pool by sampling from a 
-##            % multinomial distribution).
-##            ===================================================================
-##            """
-##            
-##            """
-##            Create parent + child measure pool (2P)
-##            """
-##            fitnessPopPrev = fitnessPop
-##            ParentChildMeasure = np.concatenate((measurePop,childMeasure),axis=0) ## total 2xNPop measures
-##            ParentChildFitness = np.concatenate((fitnessPop,childFitness))
-##            
-##            ## Sort fitness values in descending order
-##            ParentChildFitness_sortIdx = (-ParentChildFitness).argsort()
-##            ParentChildFitness_sortV = ParentChildFitness[ParentChildFitness_sortIdx]
-##            
-##            """
-##            Keep top 25% (P/2) from parent and child populations
-##            """
-##            measurePopNext = np.zeros((nPop,ParentChildMeasure.shape[1]))
-##            fitnessPopNext = np.zeros(nPop)
-##            ParentChildTmpIdx1 = ParentChildFitness_sortIdx[0:nPop/2] 
-##            measurePopNext[0:nPop/2,:] = ParentChildMeasure[ParentChildTmpIdx1,:]
-##            fitnessPopNext[0:nPop/2] = ParentChildFitness[ParentChildTmpIdx1]
-##            
-##            """
-##            For the remaining (P/2) measures, sample according to multinomial 
-##            from remaining 75% of parent/child pool
-##            """
-##            ## Method 1: Random sample - Correct but not used in the paper
-##            # ParentChildTmpIdx2 = randsample(ParentChildFitness_sortIdx(Parameters.nPop/2+1:end),Parameters.nPop/2);
-##            
-##            ## Method 2: Sample by multinomial distribution based on fitness
-##            PDFdistr75 = ParentChildFitness_sortV[nPop/2::]
-##            outputIndexccc = self.sampleMultinomial_mat(PDFdistr75, nPop/2, 'descend')
-##            
-##            ParentChildTmpIdx2 = ParentChildFitness_sortIdx[nPop/2+outputIndexccc]
-##            measurePopNext[nPop/2:nPop,:] = ParentChildMeasure[ParentChildTmpIdx2,:]
-##            fitnessPopNext[nPop/2:nPop] = ParentChildFitness[ParentChildTmpIdx2]
-##            
-##            Idxrp = np.random.permutation(nPop); ## randomly change the order of the population
-##            measurePop = measurePopNext[Idxrp,:]
-##            fitnessPop = fitnessPopNext[Idxrp]
-##            
-##            a = np.minimum(1, np.exp(np.sum(fitnessPop)-np.sum(fitnessPopPrev))) ## fitness change ratio
-##            ParentChildTmpIdxall = np.concatenate((ParentChildTmpIdx1, ParentChildTmpIdx2))
-##            achild = np.sum(ParentChildTmpIdxall > nPop)/nPop ## Percentage of children were kept for the next iteration
-##            
-##            ## Update best answer - printed to the terminal
-##            if(np.max(fitnessPop) > mVal):
-##                mVal_before = mVal
-##                mIdx = (-fitnessPop).argsort()[0]
-##                mVal = fitnessPop[mIdx]
-##                measure = measurePop[mIdx,:]
-##                print(f'{mVal}')
-##                print(measure)
-##            
-##            ###################################################################
-##            ##################### Update Analysis Tracker #####################
-##            ###################################################################
-##            if (Parameters.analysis == True): ## record all intermediate process (be aware of the possible memory limit!)
-##                Analysis['ParentChildMeasure'][:,:,t] = ParentChildMeasure
-##                Analysis['ParentChildFitness'][t,:] = ParentChildFitness
-##                Analysis['ParentChildTmpIdx2'][t,:] = ParentChildTmpIdx2
-##                Analysis['Idxrp'][t,:] = Idxrp
-##                Analysis['measurePop'][:,:,t] = measurePop
-##                Analysis['fitnessPop'][t,:] = fitnessPop
-##                Analysis['measureiter'][t,:] = measure
-##                Analysis['ratioa'][t] = a
-##                Analysis['ratioachild'][t] = achild
-##                Analysis['ratiomVal'][t] = mVal
-##                Analysis['ratio'][t] = exp(sum(fitnessPop)-sum(fitnessPopPrev))
-##                Analysis['JumpType'][t,:] = JumpType
-##                Analysis['ElemIdxUpdated'][t,:] = ElemIdxUpdated
-##                Analysis['subsetIntervalnPop'][:,:,t] = subsetIntervalnPop  
-##            
-##            ## Update terminal 
-##            if(not(t % 10)):
-##                print(f'Iteration: {str(t)}')
-##    
-##                ## Stop if we've found a measure meeting our desired level of fitness
-##                if (np.abs(mVal - mVal_before) <= Parameters.fitnessThresh):
-##                    break
-#    
-#        return measure, initialMeasure, Analysis
+        return lowerindex, upperindex
+
+#    def get_fm_class_img_coeff(self, Lattice, h, fm_len):  # Lattice is FM_name_and_index, h is a sample, fm_len
+#        """
+#        This creates a FM map with the name as the key and the index as the value
+#
+#        :param Lattice: dictionary with FM
+#        :param h: sample
+#        :param fm_len: fm length
+#        :return: the fm_coeff
+#        """
+#
+#        n = len(h)  # len(h) is the number of the samples
+#        fm_coeff = np.zeros(fm_len)
+#        pi_i = np.argsort(h)[::-1][:n] + 1 ## sorted smallest to largest
+#        for i in range(1, n):
+#            fm_coeff[Lattice[str(np.sort(pi_i[:i]))]] = h[pi_i[i - 1] - 1] - h[pi_i[i] - 1]
+#        fm_coeff[Lattice[str(np.sort(pi_i[:n]))]] = h[pi_i[n - 1] - 1]
+#        np.matmul(fm_coeff, np.transpose(fm_coeff))
+#        return fm_coeff
+
+    def invcdf_TruncatedGaussian(self,cdf,x_bar,sigma_bar,lowerBound,upperBound):
+        """
+        =======================================================================
+        %
+        % stats_TruncatedGaussian - stats for a truncated gaussian distribution
+        %
+        % INPUT
+        %   - cdf: evaluated at the values at cdf
+        %   - x_bar,sigma_bar,lowerBound,upperBound: suppose X~N(mu,sigma^2) has a normal distribution and lies within
+        %   the interval lowerBound<X<upperBound
+        %   *The size of cdfTG and pdfTG is the common size of X, MU and SIGMA.  A scalar input
+        %   functions as a constant matrix of the same size as the other inputs.
+        %
+        % OUTPUT
+        %   - val: the x corresponding to the cdf TG value
+        %
+        =======================================================================
+        """
     
-#    def evalFitness_softmax(self, Bags, Labels, measure):
-#    
-#        """
-#        ===========================================================================
-#        % Evaluate the fitness a measure, similar to evalFitness_minmax() for
-#        % classification but uses generalized mean (sometimes also named "softmax") model
-#        %
-#        % INPUT
-#        %    Labels         - 1xNumTrainBags double  - Training labels for each bag
-#        %    measure        - measure to be evaluated after update
-#        %    nPntsBags      - 1xNumTrainBags double    - number of points in each bag
-#        %    bag_row_ids    - the row indices of measure used for each bag
-#        %    diffM          - Precompute differences for each bag
-#        %
-#        % OUTPUT
-#        %   fitness         - the fitness value using min(sum(min((ci-d)^2))) for regression.
-#        %
-#        % Written by: X. Du 03/2018
-#        %
-#        ===========================================================================
-#        """
-#        
-#        p1 = self.p[0]
-#        p2 = self.p[1]
-#        
-#        fitness = 0
-#       
-#        ## Compute CI for non-singleton bags
-#        for b_idx in range(self.B):
-#            ci = self.compute_chi(Bags[b_idx])
-#            if(Labels[b_idx] == 0):  ## Negative bag, label = 0
-#                fitness = fitness - (np.mean(np.power(ci,(2*p1))))^(1/p1)
-#            else: ## Positive bag, label=1
-#                fitness = fitness - (np.mean(np.power((ci-1),(2*p2))))^(1/p2)
-#    
-#            ## Sanity check
-#            if (np.isinf(fitness) or not(np.isreal(fitness)) or np.isnan(fitness)):
-#                fitness = np.real(fitness)
-#                fitness = -10000000
-#                
-#        return fitness
-    
-#    def sampleMeasure(nSources, lowerindex, upperindex,  prevSample, IndexsubsetToChange, sampleVar):
-#        """
-#        ===========================================================================
-#        %sampleMeasure - sampling a new measure
-#        % If the number of inputs are two, sampling a brand new measure (only used during initialization)
-#        % If the number of inputs are all five, sampling a new value for only one element of the measure
-#        % This code samples a new measure value from truncated Gaussian distribution.
-#        %
-#        % INPUT
-#        %   nSources - number of sources
-#        %   lowerindex - the cell that stores all the corresponding subsets (lower index) of measure elements
-#        %   upperindex - the cell that stores all the corresponding supersets (upper index) of measure elements
-#        %   prevSample (optional)- previous measure, before update
-#        %   IndexsubsetToChange (optional)- the measure element index to be updated
-#        %   sampleVar (optional) - sampleVar set in Parameters
-#        % OUTPUT
-#        %   - measure - new measure after update
-#        %
-#        % Written by: X. Du 03/2018
-#        %
-#        ===========================================================================
-#        """
-#    
-#        if(nargin < 4):
-#            
-#            % sample a brand new measure
-#            % Flip a coin to decide whether to sample from above or sample from bottom
-#            %sample new measure, prior is uniform/no prior
-#            coin = rand(1);
-#            if coin >= 0.5 % sample from bottom
-#                [measure] = sampleMeasure_Bottom(nSources,lowerindex);
-#            else   % sample from above
-#                [measure] = sampleMeasure_Above(nSources,upperindex);
-#            end
-#        else
-#            %sample just one new element of measure
-#            
-#            Nmeasure = 2^nSources-1;
-#            measure = prevSample;
-#            if (IndexsubsetToChange<=nSources) && (IndexsubsetToChange>=1) %singleton
-#                lowerBound = 0; 
-#                upperBound = min(measure(upperindex{IndexsubsetToChange})); 
-#            elseif (IndexsubsetToChange>=(Nmeasure-nSources)) && (IndexsubsetToChange<=(Nmeasure-1)) %(nSources-1)-tuple
-#                lowerBound = max(measure(lowerindex{IndexsubsetToChange})); 
-#                upperBound = 1;
-#            else  %remaining elements
-#                lowerBound = max(measure(lowerindex{IndexsubsetToChange})); 
-#                upperBound = min(measure(upperindex{IndexsubsetToChange})); 
-#            end
-#            
-#            denom = upperBound - lowerBound;
-#            v_bar = sampleVar/(denom^2+eps);%-changed
-#            x_bar = measure(IndexsubsetToChange); %-changed
-#            
-#            %% sample from a Truncated Gaussian
-#            sigma_bar = sqrt(v_bar);
-#            c2 = rand(1);       % randomly generate a value between [0,1]
-#            [val] = invcdf_TruncatedGaussian (c2,x_bar,sigma_bar,lowerBound,upperBound); % new measure element value
-#            measure(IndexsubsetToChange) = val;  % new measure element value
-#        end
-#    
-#        return measure
-    
-#    def evalInterval(self, measure, lowerindex, upperindex):
-#        """
-#        =======================================================================
-#        % Evaluate the valid interval width of a measure, then sort in descending order.
-#        %
-#        % INPUT
-#        %   measure -  measure to be evaluated after update
-#        %   lowerindex - the cell that stores all the corresponding subsets (lower index) of measure elements
-#        %   upperindex - the cell that stores all the corresponding supersets (upper index) of measure elements
-#        % OUTPUT
-#        %   subsetInterval - the valid interval widths for the measure elements,before sorting by value
-#        %
-#        =======================================================================
-#        """
-#        
-#        nElements = self.nElements 
-#        nSources = self.N
-#        lb = np.zeros(nElements-1)
-#        ub = np.zeros(nElements-1)
-#        
-#        for j =in range(nSources)  ## singleton
-#            lb[j] = 0 ## lower bound
-#            ub[j] = min(measure(upperindex{j})); ## upper bound
-#    
-#        for j in range(nSources, nElements-nSources-1):
-#            lb[j] = max(measure(lowerindex{j})); ## lower bound
-#            ub[j] = min(measure(upperindex{j})); ## upper bound
-#        
-#        for j in range(nElements-nSources,nElements-1)
-#            lb[j] = max(measure(lowerindex{j})) ## lower bound
-#            ub[j] = 1 ## upper bound
-#            
-#        subsetInterval = ub - lb   
-#        
-#        return subsetInterval
-
-    def build_constraint_matrices(self, index_keys, fm_len):
+        term2 = (self.normcdf(upperBound,x_bar,sigma_bar) - self.normcdf(lowerBound,x_bar,sigma_bar))
+        const2 =  cdf*term2 + self.normcdf(lowerBound,x_bar,sigma_bar)
+        
+        const3 = (const2*2)-1
+        inner_temp = erfinv(const3)
+        val = inner_temp*np.sqrt(2)*sigma_bar + x_bar
+        
+        return val
+        
+        
+    def normcdf(self,x,mu,sigma):
         """
-        This method builds the necessary constraint matrices.
-
-        :param index_keys: map to reference lattice components
-        :param fm_len: length of the fuzzy measure
-        :return: the constraint matrices
+        =======================================================================
+        % INPUT
+        %   - x: the x to compute the cdf value
+        %   - mu: mean of the Gaussian distribution
+        %   - sigma: sigma of the Gaussian distribution
+        % OUTPUT
+        %   - val: the x corresponding to the cdf value
+        % based on MATLAB normcdf() function.
+        =======================================================================
         """
-
-        vls = np.arange(1, self.N + 1)
-        line = np.zeros(fm_len)
-        G = line
-        line[index_keys[str(np.array([1]))]] = -1.
-        h = np.array([0])
-        for i in range(2, self.N + 1):
-            line = np.zeros(fm_len)
-            line[index_keys[str(np.array([i]))]] = -1.
-            G = np.vstack((G, line))
-            h = np.vstack((h, np.array([0])))
-        for i in range(2, self.N + 1):
-            parent = np.array(list(itertools.combinations(vls, i)))
-            for latt_pt in parent:
-                for j in range(len(latt_pt) - 1, len(latt_pt)):
-                    children = np.array(list(itertools.combinations(latt_pt, j)))
-                    for latt_ch in children:
-                        line = np.zeros(fm_len)
-                        line[index_keys[str(latt_ch)]] = 1.
-                        line[index_keys[str(latt_pt)]] = -1.
-                        G = np.vstack((G, line))
-                        h = np.vstack((h, np.array([0])))
-
-        line = np.zeros(fm_len)
-        line[index_keys[str(vls)]] = 1.
-        G = np.vstack((G, line))
-        h = np.vstack((h, np.array([1])))
-
-        # equality constraints
-        A = np.zeros((1, fm_len))
-        A[0, -1] = 1
-        b = np.array([1]);
-
-        return G, h, A, b
-
-
-    def get_fm_class_img_coeff(self, Lattice, h, fm_len):  # Lattice is FM_name_and_index, h is a sample, fm_len
-        """
-        This creates a FM map with the name as the key and the index as the value
-
-        :param Lattice: dictionary with FM
-        :param h: sample
-        :param fm_len: fm length
-        :return: the fm_coeff
-        """
-
-        n = len(h)  # len(h) is the number of the samples
-        fm_coeff = np.zeros(fm_len)
-        pi_i = np.argsort(h)[::-1][:n] + 1 ## sorted smallest to largest
-        for i in range(1, n):
-            fm_coeff[Lattice[str(np.sort(pi_i[:i]))]] = h[pi_i[i - 1] - 1] - h[pi_i[i] - 1]
-        fm_coeff[Lattice[str(np.sort(pi_i[:n]))]] = h[pi_i[n - 1] - 1]
-        np.matmul(fm_coeff, np.transpose(fm_coeff))
-        return fm_coeff
-
+        
+        z = np.divide((x-mu),sigma)
+        p = 0.5 * erfc(np.divide(-z,np.sqrt(2)))
+        
+        return p
 
     def get_keys_index(self):
         """
@@ -719,20 +800,17 @@ class MIChoquetIntegral:
         :return: 
         """
         
-        if self.type == 'quad':
-            n = len(x2)
-            pi_i = np.argsort(x2)[::-1][:n] + 1
-            ch = x2[pi_i[0] - 1] * (self.fm[str(pi_i[:1])])
-            for i in range(1, n):
-                latt_pti = np.sort(pi_i[:i + 1])
-                latt_ptimin1 = np.sort(pi_i[:i])
-                ch = ch + x2[pi_i[i] - 1] * (self.fm[str(latt_pti)] - self.fm[str(latt_ptimin1)])
-            
-            sort_idx = [idx for idx, val in enumerate(self.all_sorts) if (sum(pi_i == val ) == n)]
-            
-            return ch, int(sort_idx[0]+1)
-        else:
-            print("If using sugeno measure, you need to use chi_sugeno.")
+        n = len(x2)
+        pi_i = np.argsort(x2)[::-1][:n] + 1
+        ch = x2[pi_i[0] - 1] * (self.fm[str(pi_i[:1])])
+        for i in range(1, n):
+            latt_pti = np.sort(pi_i[:i + 1])
+            latt_ptimin1 = np.sort(pi_i[:i])
+            ch = ch + x2[pi_i[i] - 1] * (self.fm[str(latt_pti)] - self.fm[str(latt_ptimin1)])
+        
+        sort_idx = [idx for idx, val in enumerate(self.all_sorts) if (sum(pi_i == val ) == n)]
+        
+        return ch, int(sort_idx[0]+1)
             
     def get_linear_eqts(self):
         """
