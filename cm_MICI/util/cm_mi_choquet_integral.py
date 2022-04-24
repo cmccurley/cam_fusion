@@ -31,6 +31,11 @@ import numpy as np
 import itertools
 from scipy.special import erfinv, erfc
 
+## Import numba for GPU optimization 
+from numba import jit
+from numba import cuda
+from numba import njit, prange
+
 ######################################################################
 ####################### Function Definitions #########################
 ######################################################################
@@ -46,13 +51,6 @@ class MIChoquetIntegral:
         chi = MIChoquetIntegral()
         ===========================================================================
         """
-        self.type='noisy-or'
-        self.trainSamples, self.trainLabels = [], []
-        self.testSamples, self.testLabels = [], []
-        self.N, self.numberConstraints, self.M = 0, 0, 0
-        self.g = 0
-        self.fm = []
-        self.type = []
 
 
     def train_chi_softmax(self, Bags, Labels, Parameters):
@@ -81,7 +79,6 @@ class MIChoquetIntegral:
         self.nElements = (2**(self.N))-1 ## number of measure elements, including mu_all=1
         
         ## Initialize dictionary of fuzzy measure elements
-        fm_len = 2 ** self.N - 1  # nc
         self.index_keys = self.get_keys_index()
         
         ## Get measure lattice information - Number of elements in each tier,
@@ -123,13 +120,22 @@ class MIChoquetIntegral:
         self.measureEach = measureEach ## The actual indices
 
         
-        ## Estimate measure parameters
+        ## Estimate measure parameters using evolutionary algorithm
         print("Number Sources : ", self.N, "; Number Training Bags : ", self.B)
-        self.fm = self.produce_lattice_softmax(Bags, Labels, Parameters)
+        measure, initialMeasure, Analysis = self.produce_lattice_softmax(Bags, Labels, Parameters)
+        
+        fm = dict()
+        for key in self.index_keys:
+            fm[key] = measure[self.index_keys[key]]
+        
+        self.measure = measure
+        self.initialMeasure = initialMeasure
+        self.Analysis = Analysis
+        self.fm = fm
 
         return self
 
-    def compute_chi(self, Bag):
+    def compute_chi(self, Bag, nBags, measure):
         """
         ===========================================================================
         This will produce an output of the ChI
@@ -141,52 +147,57 @@ class MIChoquetIntegral:
         :return: output of the choquet integral.
         ===========================================================================
         """
-        ch = np.zeros(Bag.shape[0])
-
-        for inst_idx in range(Bag.shape[0]):
-            x = Bag[inst_idx,:]
-            n = len(x)
-            pi_i = np.argsort(x)[::-1][:n] + 1
-            ch[inst_idx] = x[pi_i[0] - 1] * (self.fm[str(pi_i[:1])])
-            for i in range(1, n):
-                latt_pti = np.sort(pi_i[:i + 1])
-                latt_ptimin1 = np.sort(pi_i[:i])
-                ch[inst_idx] = ch[inst_idx] + x[pi_i[i] - 1] * (self.fm[str(latt_pti)] - self.fm[str(latt_ptimin1)])
-        return ch
-
-#    def produce_lattice_softmax(self, Bags, Labels):
-#        """
-#        ===========================================================================
-#        This method builds is where the lattice(or FM variables) will be learned.
-#
-#        The FM values can be found via a quadratic program, which is used here
-#        after setting up constraint matrices. Refer to papers for complete overview.
-#
-#        :return: Lattice, the learned FM variables.
-#        ===========================================================================
-#        """
-#
-#        fm_len = 2 ** self.N - 1  # nc
-#        E = np.zeros((fm_len, fm_len))  # D
-#        L = np.zeros(fm_len)  # f
-#        index_keys = self.get_keys_index()
-#        for i in range(0, self.M):  # it's going through one sample at a time.
-#            l = self.trainLabels[i]  # this is the labels
-#            fm_coeff = self.get_fm_class_img_coeff(index_keys, self.trainSamples[:, i], fm_len)  # this is Hdiff
-#            # print(fm_coeff)
-#            L = L + (-2) * l * fm_coeff
-#            E = E + np.matmul(fm_coeff.reshape((fm_len, 1)), fm_coeff.reshape((1, fm_len)))
-#
-#        solvers.options['show_progress'] = False
-#        G, h, A, b = self.build_constraint_matrices(index_keys, fm_len)
-#        sol = solvers.qp(matrix(2 * E, tc='d'), matrix(L.T, tc='d'), matrix(G, tc='d'), matrix(h, tc='d'),
-#                         matrix(A, tc='d'), matrix(b, tc='d'))
-#
-#        g = sol['x']
-#        Lattice = {}
-#        for key in index_keys.keys():
-#            Lattice[key] = g[index_keys[key]]
-#        return Lattice
+        
+        #######################################################################
+        #################### Set up measure for look-up #######################
+        #######################################################################
+        index_keys = self.index_keys
+        fm = dict()
+        for key in index_keys:
+            fm[key] = measure[index_keys[key]]
+        
+        #######################################################################
+        ##################### Compute ChI on Single Bag #######################
+        #######################################################################
+        if (nBags == 1): ## Single bag
+            ch = np.zeros(Bag.shape[0])
+        
+            for inst_idx in range(Bag.shape[0]):
+                x = Bag[inst_idx,:]
+                n = len(x)
+                pi_i = np.argsort(x)[::-1][:n] + 1
+                ch[inst_idx] = x[pi_i[0] - 1] * (fm[str(pi_i[:1])])
+                for i in range(1, n):
+                    latt_pti = np.sort(pi_i[:i + 1])
+                    latt_ptimin1 = np.sort(pi_i[:i])
+                    ch[inst_idx] = ch[inst_idx] + x[pi_i[i] - 1] * (fm[str(latt_pti)] - fm[str(latt_ptimin1)])
+            
+            y = ch
+        
+        #######################################################################
+        #################### Compute ChI on Multiple Bags #####################
+        #######################################################################
+        else: ## Multiple bags, concatenate outputs
+            for b in range(nBags):
+            
+                ch = np.zeros(Bag[b].shape[0])
+        
+                for inst_idx in range(Bag[b].shape[0]):
+                    x = Bag[b][inst_idx,:]
+                    n = len(x)
+                    pi_i = np.argsort(x)[::-1][:n] + 1
+                    ch[inst_idx] = x[pi_i[0] - 1] * (fm[str(pi_i[:1])])
+                    for i in range(1, n):
+                        latt_pti = np.sort(pi_i[:i + 1])
+                        latt_ptimin1 = np.sort(pi_i[:i])
+                        ch[inst_idx] = ch[inst_idx] + x[pi_i[i] - 1] * (fm[str(latt_pti)] - fm[str(latt_ptimin1)])
+                
+                if not(b):
+                    y = ch
+                else:
+                    y = np.concatenate((y,ch))
+            
+        return y
     
     def produce_lattice_softmax(self, Bags, Labels, Parameters, trueInitMeasure=None):
         
@@ -277,6 +288,7 @@ class MIChoquetIntegral:
         measure = measurePop[indx,:]  
         initialMeasure = measure
         mVal_before = -10000
+        sampleVar = Parameters.sampleVar
         
         for t in range(Parameters.maxIterations):
             childMeasure = measurePop
@@ -284,119 +296,145 @@ class MIChoquetIntegral:
             subsetIntervalnPop = np.zeros((nPop,nElements-1)) ## Dont need to sample mu_all=1 (last element)
             ElemIdxUpdated = np.zeros(nPop)
             JumpType = np.zeros(nPop)
+            
+            ###################################################################
+            ########################## Run in Parallel ########################
+            ###################################################################
+            
             for i in range(nPop):
-                subsetInterval = self.evalInterval(measurePop[i,:], lowerindex, upperindex)
-                subsetIntervalnPop[i,:] = subsetInterval
                 
-                ## Sample new value(s)
-                z = np.random.uniform(low=0,high=1)
-                if(z < eta): ## Small-scale mutation: update only one element of the measure
-                    iinterv = self.sampleMultinomial_mat(subsetInterval, 1, 'descend' ) ## Update the one interval according to multinomial
-                    childMeasure[i,:] = self.sampleMeasure(nSources, lowerindex, upperindex, childMeasure[i,:],iinterv, sampleVar)
-                    childFitness[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
-                    JumpType[i] = 1
-                    ElemIdxUpdated[i] = iinterv
-                else: ## Large-scale mutation: update all measure elements sort by valid interval widths in descending order
-                    indx_subsetInterval = (-subsetInterval).argsort(axis=1) ## sort the intervals in descending order
-      
-                    for iinterv in range(indx_subsetInterval.shape[1]): ## for all elements
-                        childMeasure[i,:] =  self.sampleMeasure(nSources, lowerindex, upperindex, childMeasure[i,:],iinterv, sampleVar)
-                        childFitness[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
-                        JumpType[i] = 2
+                childMeasure[i,:], childFitness[i], JumpType[i] = self.sample_population(Bags, Labels, measurePop[i,:], childMeasure[i,:], lowerindex, upperindex, Parameters)
     
-#            ###################################################################
-#            ###################### Evolutionary Algorithm #####################
-#            ###################################################################
-#            """
-#            ===================================================================
-#            % Example: Say population size is P. Both P parent and P child are 
-#            % pooled together (size 2P) and sort by fitness, then, P/2 measures
-#            % with top 25% of the fitness are kept; The remaining P/2 child 
-#            % comes from the remaining 75% of the pool by sampling from a 
-#            % multinomial distribution).
-#            ===================================================================
-#            """
-#            
-#            """
-#            Create parent + child measure pool (2P)
-#            """
-#            fitnessPopPrev = fitnessPop
-#            ParentChildMeasure = np.concatenate((measurePop,childMeasure),axis=0) ## total 2xNPop measures
-#            ParentChildFitness = np.concatenate((fitnessPop,childFitness))
-#            
-#            ## Sort fitness values in descending order
-#            ParentChildFitness_sortIdx = (-ParentChildFitness).argsort()
-#            ParentChildFitness_sortV = ParentChildFitness[ParentChildFitness_sortIdx]
-#            
-#            """
-#            Keep top 25% (P/2) from parent and child populations
-#            """
-#            measurePopNext = np.zeros((nPop,ParentChildMeasure.shape[1]))
-#            fitnessPopNext = np.zeros(nPop)
-#            ParentChildTmpIdx1 = ParentChildFitness_sortIdx[0:nPop/2] 
-#            measurePopNext[0:nPop/2,:] = ParentChildMeasure[ParentChildTmpIdx1,:]
-#            fitnessPopNext[0:nPop/2] = ParentChildFitness[ParentChildTmpIdx1]
-#            
-#            """
-#            For the remaining (P/2) measures, sample according to multinomial 
-#            from remaining 75% of parent/child pool
-#            """
-#            ## Method 1: Random sample - Correct but not used in the paper
-#            # ParentChildTmpIdx2 = randsample(ParentChildFitness_sortIdx(Parameters.nPop/2+1:end),Parameters.nPop/2);
-#            
-#            ## Method 2: Sample by multinomial distribution based on fitness
-#            PDFdistr75 = ParentChildFitness_sortV[nPop/2::]
-#            outputIndexccc = self.sampleMultinomial_mat(PDFdistr75, nPop/2, 'descend')
-#            
-#            ParentChildTmpIdx2 = ParentChildFitness_sortIdx[nPop/2+outputIndexccc]
-#            measurePopNext[nPop/2:nPop,:] = ParentChildMeasure[ParentChildTmpIdx2,:]
-#            fitnessPopNext[nPop/2:nPop] = ParentChildFitness[ParentChildTmpIdx2]
-#            
-#            Idxrp = np.random.permutation(nPop); ## randomly change the order of the population
-#            measurePop = measurePopNext[Idxrp,:]
-#            fitnessPop = fitnessPopNext[Idxrp]
-#            
-#            a = np.minimum(1, np.exp(np.sum(fitnessPop)-np.sum(fitnessPopPrev))) ## fitness change ratio
-#            ParentChildTmpIdxall = np.concatenate((ParentChildTmpIdx1, ParentChildTmpIdx2))
-#            achild = np.sum(ParentChildTmpIdxall > nPop)/nPop ## Percentage of children were kept for the next iteration
-#            
-#            ## Update best answer - printed to the terminal
-#            if(np.max(fitnessPop) > mVal):
-#                mVal_before = mVal
-#                mIdx = (-fitnessPop).argsort()[0]
-#                mVal = fitnessPop[mIdx]
-#                measure = measurePop[mIdx,:]
-#                print(f'{mVal}')
-#                print(measure)
-#            
-#            ###################################################################
-#            ##################### Update Analysis Tracker #####################
-#            ###################################################################
-#            if (Parameters.analysis == True): ## record all intermediate process (be aware of the possible memory limit!)
-#                Analysis['ParentChildMeasure'][:,:,t] = ParentChildMeasure
-#                Analysis['ParentChildFitness'][t,:] = ParentChildFitness
-#                Analysis['ParentChildTmpIdx2'][t,:] = ParentChildTmpIdx2
-#                Analysis['Idxrp'][t,:] = Idxrp
-#                Analysis['measurePop'][:,:,t] = measurePop
-#                Analysis['fitnessPop'][t,:] = fitnessPop
-#                Analysis['measureiter'][t,:] = measure
-#                Analysis['ratioa'][t] = a
-#                Analysis['ratioachild'][t] = achild
-#                Analysis['ratiomVal'][t] = mVal
-#                Analysis['ratio'][t] = exp(sum(fitnessPop)-sum(fitnessPopPrev))
-#                Analysis['JumpType'][t,:] = JumpType
-#                Analysis['ElemIdxUpdated'][t,:] = ElemIdxUpdated
-#                Analysis['subsetIntervalnPop'][:,:,t] = subsetIntervalnPop  
-#            
-#            ## Update terminal 
-#            if(not(t % 10)):
-#                print(f'Iteration: {str(t)}')
-#    
-#                ## Stop if we've found a measure meeting our desired level of fitness
-#                if (np.abs(mVal - mVal_before) <= Parameters.fitnessThresh):
-#                    break
-#    
-#        return measure, initialMeasure, Analysis
+                
+    
+#                subsetInterval = self.evalInterval(measurePop[i,:], lowerindex, upperindex)
+#                subsetIntervalnPop[i,:] = subsetInterval
+#                
+#                ## Sample new value(s)
+#                z = np.random.uniform(low=0,high=1)
+#                if(z < eta): ## Small-scale mutation: update only one element of the measure
+#                    iinterv = self.sampleMultinomial_mat(subsetInterval, 1, 'descend' ) ## Update the one interval according to multinomial
+#                    childMeasure[i,:] = self.sampleMeasure(nSources, lowerindex, upperindex, childMeasure[i,:],iinterv, sampleVar)
+#                    childFitness[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
+#                    JumpType[i] = 1
+#            #                    ElemIdxUpdated[i] = iinterv
+#                else: ## Large-scale mutation: update all measure elements sort by valid interval widths in descending order
+#                    indx_subsetInterval = (-subsetInterval).argsort() ## sort the intervals in descending order
+#              
+#                    for iinterv in range(len(indx_subsetInterval)): ## for all elements
+#                        childMeasure[i,:] =  self.sampleMeasure(nSources, lowerindex, upperindex, childMeasure[i,:],iinterv, sampleVar)
+#                        childFitness[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
+#                        JumpType[i] = 2
+    
+            ###################################################################
+            ###################### Evolutionary Algorithm #####################
+            ###################################################################
+            """
+            ===================================================================
+            % Example: Say population size is P. Both P parent and P child are 
+            % pooled together (size 2P) and sort by fitness, then, P/2 measures
+            % with top 25% of the fitness are kept; The remaining P/2 child 
+            % comes from the remaining 75% of the pool by sampling from a 
+            % multinomial distribution).
+            ===================================================================
+            """
+            
+            """
+            Create parent + child measure pool (2P)
+            """
+            fitnessPopPrev = fitnessPop
+            ParentChildMeasure = np.concatenate((measurePop,childMeasure),axis=0) ## total 2xNPop measures
+            ParentChildFitness = np.concatenate((fitnessPop,childFitness))
+            
+            ## Sort fitness values in descending order
+            ParentChildFitness_sortIdx = (-ParentChildFitness).argsort()
+            ParentChildFitness_sortV = ParentChildFitness[ParentChildFitness_sortIdx]
+            
+            """
+            Keep top 25% (P/2) from parent and child populations
+            """
+            measurePopNext = np.zeros((nPop,ParentChildMeasure.shape[1]))
+            fitnessPopNext = np.zeros(nPop)
+            ParentChildTmpIdx1 = ParentChildFitness_sortIdx[0:int(nPop/2)] 
+            measurePopNext[0:int(nPop/2),:] = ParentChildMeasure[ParentChildTmpIdx1,:]
+            fitnessPopNext[0:int(nPop/2)] = ParentChildFitness[ParentChildTmpIdx1]
+            
+            """
+            For the remaining (P/2) measures, sample according to multinomial 
+            from remaining 75% of parent/child pool
+            """
+            ## Method 1: Random sample - Correct but not used in the paper
+            # ParentChildTmpIdx2 = randsample(ParentChildFitness_sortIdx(Parameters.nPop/2+1:end),Parameters.nPop/2);
+            
+            ## Method 2: Sample by multinomial distribution based on fitness
+            PDFdistr75 = ParentChildFitness_sortV[int(nPop/2)::]
+            outputIndexccc = self.sampleMultinomial_mat(PDFdistr75, int(nPop/2), 'descend')
+            
+            ParentChildTmpIdx2 = ParentChildFitness_sortIdx[int(nPop/2)+outputIndexccc]
+            measurePopNext[int(nPop/2):nPop,:] = ParentChildMeasure[ParentChildTmpIdx2,:]
+            fitnessPopNext[int(nPop/2):nPop] = ParentChildFitness[ParentChildTmpIdx2]
+            
+            Idxrp = np.random.permutation(nPop) ## randomly change the order of the population
+            measurePop = measurePopNext[Idxrp,:]
+            fitnessPop = fitnessPopNext[Idxrp]
+            
+            a = np.minimum(1, np.exp(np.sum(fitnessPop)-np.sum(fitnessPopPrev))) ## fitness change ratio
+            ParentChildTmpIdxall = np.concatenate((ParentChildTmpIdx1, ParentChildTmpIdx2))
+            achild = np.sum(ParentChildTmpIdxall > nPop)/nPop ## Percentage of children were kept for the next iteration
+            
+            ## Update best answer - printed to the terminal
+            if(np.max(fitnessPop) > mVal):
+                mVal_before = mVal
+                mIdx = (-fitnessPop).argsort()[0]
+                mVal = fitnessPop[mIdx]
+                measure = measurePop[mIdx,:]
+                print(f'{mVal}')
+                print(measure)
+            
+            ###################################################################
+            ##################### Update Analysis Tracker #####################
+            ###################################################################
+            if (Parameters.analysis == True): ## record all intermediate process (be aware of the possible memory limit!)
+                if not(t):
+                    Analysis['ParentChildMeasure'] = np.zeros((ParentChildMeasure.shape[0],ParentChildMeasure.shape[1],Parameters.maxIterations))
+                    Analysis['ParentChildFitness'] = np.zeros((Parameters.maxIterations,len(ParentChildFitness)))
+                    Analysis['ParentChildTmpIdx2'] = np.zeros((Parameters.maxIterations,len(ParentChildTmpIdx2)))
+                    Analysis['Idxrp'] = np.zeros((Parameters.maxIterations,len(Idxrp)))
+                    Analysis['measurePop'] = np.zeros((measurePop.shape[0],measurePop.shape[1],Parameters.maxIterations))
+                    Analysis['fitnessPop'] = np.zeros((Parameters.maxIterations,len(fitnessPop)))
+                    Analysis['measureiter'] = np.zeros((Parameters.maxIterations,len(measure)))
+                    Analysis['ratioa'] = np.zeros((Parameters.maxIterations))
+                    Analysis['ratioachild'] = np.zeros((Parameters.maxIterations))
+                    Analysis['ratiomVal'] = np.zeros((Parameters.maxIterations))
+                    Analysis['ratio'] = np.zeros((Parameters.maxIterations))
+                    Analysis['JumpType'] = np.zeros((Parameters.maxIterations,len(JumpType))) 
+#                    Analysis['ElemIdxUpdated'] = np.zeros((Parameters.maxIterations,len(ElemIdxUpdated))) 
+#                    Analysis['subsetIntervalnPop'] = np.zeros((subsetIntervalnPop.shape[0],subsetIntervalnPop.shape[1],Parameters.maxIterations)) 
+                else:
+                    Analysis['ParentChildMeasure'][:,:,t] = ParentChildMeasure
+                    Analysis['ParentChildFitness'][t,:] = ParentChildFitness
+                    Analysis['ParentChildTmpIdx2'][t,:] = ParentChildTmpIdx2
+                    Analysis['Idxrp'][t,:] = Idxrp
+                    Analysis['measurePop'][:,:,t] = measurePop
+                    Analysis['fitnessPop'][t,:] = fitnessPop
+                    Analysis['measureiter'][t,:] = measure
+                    Analysis['ratioa'][t] = a
+                    Analysis['ratioachild'][t] = achild
+                    Analysis['ratiomVal'][t] = mVal
+                    Analysis['ratio'][t] = np.exp(np.sum(fitnessPop)-np.sum(fitnessPopPrev))
+                    Analysis['JumpType'][t,:] = JumpType
+#                    Analysis['ElemIdxUpdated'][t,:] = ElemIdxUpdated
+#                    Analysis['subsetIntervalnPop'][:,:,t] = subsetIntervalnPop  
+            
+            ## Update terminal 
+            if(not(t % 2)):
+                print(f'Iteration: {str(t)}')
+    
+            ## Stop if we've found a measure meeting our desired level of fitness
+            if (np.abs(mVal - mVal_before) <= Parameters.fitnessThresh):
+                break
+    
+        return measure, initialMeasure, Analysis
     
     def evalFitness_softmax(self, Bags, Labels, measure):
     
@@ -427,11 +465,11 @@ class MIChoquetIntegral:
        
         ## Compute CI for non-singleton bags
         for b_idx in range(self.B):
-            ci = self.compute_chi(Bags[b_idx])
+            ci = self.compute_chi(Bags[b_idx], 1, measure)
             if(Labels[b_idx] == 0):  ## Negative bag, label = 0
-                fitness = fitness - (np.mean(np.power(ci,(2*p1))))^(1/p1)
+                fitness = fitness - (np.mean((ci**(2*p1)).round(5)).round(5))**(1/p1)
             else: ## Positive bag, label=1
-                fitness = fitness - (np.mean(np.power((ci-1),(2*p2))))^(1/p2)
+                fitness = fitness - (np.mean(((ci-1)**(2*p2)).round(5)).round(5))**(1/p2)
     
             ## Sanity check
             if (np.isinf(fitness) or not(np.isreal(fitness)) or np.isnan(fitness)):
@@ -440,7 +478,48 @@ class MIChoquetIntegral:
                 
         return fitness
     
-    def sampleMeasure(self, nSources, lowerindex, upperindex,  prevSample=None, IndexsubsetToChange=None, sampleVar=None):
+    def sample_population(self,Bags, Labels, measurePop, childMeasure, lowerindex, upperindex, Parameters):
+        """
+        ===========================================================================
+        % Evaluate the fitness a measure, similar to evalFitness_minmax() for
+        % classification but uses generalized mean (sometimes also named "softmax") model
+        %
+        % INPUT
+        %    Labels         - 1xNumTrainBags double  - Training labels for each bag
+        %    measure        - measure to be evaluated after update
+        %    nPntsBags      - 1xNumTrainBags double    - number of points in each bag
+        %    bag_row_ids    - the row indices of measure used for each bag
+        %    diffM          - Precompute differences for each bag
+        %
+        % OUTPUT
+        %   fitness         - the fitness value using min(sum(min((ci-d)^2))) for regression.
+        %
+        % Written by: X. Du 03/2018
+        %
+        ===========================================================================
+        """
+        
+        subsetInterval = self.evalInterval(measurePop, lowerindex, upperindex)
+        
+        ## Sample new value(s)
+        z = np.random.uniform(low=0,high=1)
+        if(z < Parameters.eta): ## Small-scale mutation: update only one element of the measure
+            iinterv = self.sampleMultinomial_mat(subsetInterval, 1, 'descend' ) ## Update the one interval according to multinomial
+            childMeasure = self.sampleMeasure(self.N, lowerindex, upperindex, childMeasure,iinterv, Parameters.sampleVar)
+            childFitness = self.evalFitness_softmax(Bags, Labels, measurePop)
+            JumpType = 1
+
+        else: ## Large-scale mutation: update all measure elements sort by valid interval widths in descending order
+            indx_subsetInterval = (-subsetInterval).argsort() ## sort the intervals in descending order
+      
+            for iinterv in range(len(indx_subsetInterval)): ## for all elements
+                childMeasure =  self.sampleMeasure(self.N, lowerindex, upperindex, childMeasure,iinterv, Parameters.sampleVar)
+                childFitness = self.evalFitness_softmax(Bags, Labels, measurePop)
+                JumpType = 2
+        
+        return childMeasure, childFitness, JumpType
+    
+    def sampleMeasure(self, *args):
         """
         ===========================================================================
         %sampleMeasure - sampling a new measure
@@ -460,8 +539,18 @@ class MIChoquetIntegral:
         %
         ===========================================================================
         """
+        
+        ## Extract function arguments
+        nSources = args[0]
+        lowerindex = args[1]
+        upperindex = args[2]
     
-        if(prevSample == None):
+        if (len(args) > 4):
+            prevSample = args[3]
+            IndexsubsetToChange = args[4]
+            sampleVar = args[5]
+    
+        if(len(args) < 4):
             """
             ## Sample a brand new measure
             ## Flip a coin to decide whether to sample from above or sample from bottom
@@ -475,12 +564,12 @@ class MIChoquetIntegral:
         else:
             ## Sample just one new element of measure
             
-            nElements = self.N
+            nElements = self.nElements
             measure = prevSample
-            if ((IndexsubsetToChange<=nSources) and (IndexsubsetToChange>=0)): ## singleton
+            if ((IndexsubsetToChange<=nSources-1) and (IndexsubsetToChange>=0)): ## singleton
                 lowerBound = 0
                 upperBound = np.amin(measure[upperindex[IndexsubsetToChange]])
-            elif ((IndexsubsetToChange>=(nElements-nSources)) and (IndexsubsetToChange<=(nElements-1))): ## (nSources-1)-tuple
+            elif ((IndexsubsetToChange>=(nElements-nSources-1)) and (IndexsubsetToChange<=(nElements-2))): ## (nSources-1)-tuple
                 lowerBound = np.amax(measure[lowerindex[IndexsubsetToChange]])
                 upperBound = 1
             else:  ## remaining elements
@@ -489,12 +578,12 @@ class MIChoquetIntegral:
             
             denom = upperBound - lowerBound
             v_bar = sampleVar/((denom**2)+1e-5) ## -changed
-            x_bar = measure[IndexsubsetToChange]; ## -changed
+            x_bar = measure[IndexsubsetToChange] ## -changed
             
             ## Sample from a Truncated Gaussian
             sigma_bar = np.sqrt(v_bar)
             c2 = np.random.uniform(low=0,high=1) ## Randomly generate a value between [0,1]
-            val = self.invcdf_TruncatedGaussian (c2,x_bar,sigma_bar,lowerBound,upperBound) ## New measure element value
+            val = self.invcdf_TruncatedGaussian(c2,x_bar,sigma_bar,lowerBound,upperBound) ## New measure element value
             measure[IndexsubsetToChange] = val  ## New measure element value
     
         return measure
@@ -561,41 +650,41 @@ class MIChoquetIntegral:
         return measure
     
     
-#    def evalInterval(self, measure, lowerindex, upperindex):
-#        """
-#        =======================================================================
-#        % Evaluate the valid interval width of a measure, then sort in descending order.
-#        %
-#        % INPUT
-#        %   measure -  measure to be evaluated after update
-#        %   lowerindex - the cell that stores all the corresponding subsets (lower index) of measure elements
-#        %   upperindex - the cell that stores all the corresponding supersets (upper index) of measure elements
-#        % OUTPUT
-#        %   subsetInterval - the valid interval widths for the measure elements,before sorting by value
-#        %
-#        =======================================================================
-#        """
-#        
-#        nElements = self.nElements 
-#        nSources = self.N
-#        lb = np.zeros(nElements-1)
-#        ub = np.zeros(nElements-1)
-#        
-#        for j in range(nSources)  ## singleton
-#            lb[j] = 0 ## lower bound
-#            ub[j] = min(measure(upperindex{j})); ## upper bound
-#    
-#        for j in range(nSources, nElements-nSources-1):
-#            lb[j] = max(measure(lowerindex{j})); ## lower bound
-#            ub[j] = min(measure(upperindex{j})); ## upper bound
-#        
-#        for j in range(nElements-nSources,nElements-1)
-#            lb[j] = max(measure(lowerindex{j})) ## lower bound
-#            ub[j] = 1 ## upper bound
-#            
-#        subsetInterval = ub - lb   
-#        
-#        return subsetInterval
+    def evalInterval(self, measure, lowerindex, upperindex):
+        """
+        =======================================================================
+        % Evaluate the valid interval width of a measure, then sort in descending order.
+        %
+        % INPUT
+        %   measure -  measure to be evaluated after update
+        %   lowerindex - the cell that stores all the corresponding subsets (lower index) of measure elements
+        %   upperindex - the cell that stores all the corresponding supersets (upper index) of measure elements
+        % OUTPUT
+        %   subsetInterval - the valid interval widths for the measure elements,before sorting by value
+        %
+        =======================================================================
+        """
+        
+        nElements = self.nElements 
+        nSources = self.N
+        lb = np.zeros(nElements-1)
+        ub = np.zeros(nElements-1)
+        
+        for j in range(nSources):  ## singleton
+            lb[j] = 0 ## lower bound
+            ub[j] = np.amin(measure[upperindex[j]]) ## upper bound
+    
+        for j in range(nSources, nElements-nSources-1):
+            lb[j] = np.amax(measure[lowerindex[j]]) ## lower bound
+            ub[j] = np.amin(measure[upperindex[j]]) ## upper bound
+        
+        for j in range(nElements-nSources-1,nElements-1):
+            lb[j] = np.max(measure[lowerindex[j]]) ## lower bound
+            ub[j] = 1 ## upper bound
+            
+        subsetInterval = ub - lb   
+        
+        return subsetInterval
     
     def compute_bounds(self):
         
@@ -705,25 +794,6 @@ class MIChoquetIntegral:
         
         return lowerindex, upperindex
 
-#    def get_fm_class_img_coeff(self, Lattice, h, fm_len):  # Lattice is FM_name_and_index, h is a sample, fm_len
-#        """
-#        This creates a FM map with the name as the key and the index as the value
-#
-#        :param Lattice: dictionary with FM
-#        :param h: sample
-#        :param fm_len: fm length
-#        :return: the fm_coeff
-#        """
-#
-#        n = len(h)  # len(h) is the number of the samples
-#        fm_coeff = np.zeros(fm_len)
-#        pi_i = np.argsort(h)[::-1][:n] + 1 ## sorted smallest to largest
-#        for i in range(1, n):
-#            fm_coeff[Lattice[str(np.sort(pi_i[:i]))]] = h[pi_i[i - 1] - 1] - h[pi_i[i] - 1]
-#        fm_coeff[Lattice[str(np.sort(pi_i[:n]))]] = h[pi_i[n - 1] - 1]
-#        np.matmul(fm_coeff, np.transpose(fm_coeff))
-#        return fm_coeff
-
     def invcdf_TruncatedGaussian(self,cdf,x_bar,sigma_bar,lowerBound,upperBound):
         """
         =======================================================================
@@ -770,6 +840,89 @@ class MIChoquetIntegral:
         p = 0.5 * erfc(np.divide(-z,np.sqrt(2)))
         
         return p
+
+
+    def sampleMultinomial_mat(self, PDFdistr, NumSamples, MethodStr):
+        """
+        =======================================================================
+        % Generate random samples from a multinomial. Return index of the sample.
+        %
+        % INPUT
+        % PDFdistr - distribution, can be fitness or interval or any distribution
+        %            input. Must be 1x#of distrbution values
+        % NumSamples - Number of samples
+        % MethodStr - ='descend', sort by descending order, the larger the distribution
+        % the more likely it is to be sampled. ='ascend', sort by ascending order,
+        % the smaller the distribution value the more likely it is to be sampled
+        % (to be used in picking samples). Case insensitive!
+        % OUTPUT
+        % Indxccc - index of the samples
+        %
+        =======================================================================
+        """
+        
+#        ## Method 1: correct! Vector form. Uses a for-loop. Slow.
+#        Indxccc = []
+#        PDFdistr_sortIdx = (-PDFdistr).argsort() ## Sort descending order
+#        PDFdistr_resort = PDFdistr[PDFdistr_sortIdx]
+#        PDFdistr_resort_norm = np.divide(PDFdistr_resort, np.sum(PDFdistr_resort))
+#        PDFdistr_resort_normCDF = np.cumsum(PDFdistr_resort_norm)
+#        ccc = np.random.uniform(low=0,high=1,size=NumSamples)
+#        for pciter in range(NumSamples):
+#            Indxccc.append(np.where(ccc[pciter]<=PDFdistr_resort_normCDF)) ## draw from Multinomial CDF, the first index/element that is larger than ccc =rand(1)
+#
+#        outputIndex = PDFdistr_sortIdx[Indxccc]
+        
+        ## Method 2: correct! Matrix form. Faster
+        if (MethodStr == 'descend'):
+            if (np.sum(PDFdistr<0)==0): ## All positive distribution values
+                PDFdistr_sortIdx = (-PDFdistr).argsort()
+                PDFdistr_resort = PDFdistr[PDFdistr_sortIdx]
+            elif (np.sum(PDFdistr<0)==len(PDFdistr)): ## all negative
+                PDFdistr = np.divide(-1,PDFdistr)
+                PDFdistr_sortIdx = (-PDFdistr).argsort()
+                PDFdistr_resort = PDFdistr[PDFdistr_sortIdx]
+            else:
+                PDFdistr = PDFdistr-np.amax(PDFdistr)-(1e-5);
+                PDFdistr = np.divide(-1,PDFdistr)
+                PDFdistr_sortIdx = (-PDFdistr).argsort()
+                PDFdistr_resort = PDFdistr[PDFdistr_sortIdx]
+                
+        elif (MethodStr == 'ascend'):
+            if  (np.sum(PDFdistr<0)==0): ## all positive distribution values
+                PDFdistr = np.divide(-1,PDFdistr)
+                PDFdistr_sortIdx = (-PDFdistr).argsort()
+                PDFdistr_sortIdx = PDFdistr_sortIdx[::-1]
+                PDFdistr_resort = PDFdistr[PDFdistr_sortIdx]
+            elif (np.sum(PDFdistr<0)==len(PDFdistr)): ## all negative     
+                PDFdistr_sortIdx = (-PDFdistr).argsort()
+                PDFdistr_sortIdx = PDFdistr_sortIdx[::-1]
+                PDFdistr_resort = PDFdistr[PDFdistr_sortIdx]
+            else:
+                PDFdistr = PDFdistr-np.amax(PDFdistr)-(1e-5)
+                PDFdistr_sortIdx = (-PDFdistr).argsort()
+                PDFdistr_sortIdx = PDFdistr_sortIdx[::-1]
+                PDFdistr_resort = PDFdistr[PDFdistr_sortIdx]
+        
+        PDFdistr_resort_norm = np.divide(PDFdistr_resort, np.sum(PDFdistr_resort))
+        PDFdistr_resort_normCDF = np.cumsum(PDFdistr_resort_norm)
+        ccc = np.random.uniform(low=0,high=1,size=NumSamples)
+        cccrepmat = np.tile(np.expand_dims(ccc,axis=1), (1,len(PDFdistr)))
+        PDFdistr_resort_normCDFrepmat = np.tile(PDFdistr_resort_normCDF,(NumSamples,1))
+        diffrepmat = cccrepmat - PDFdistr_resort_normCDFrepmat
+        
+        if (NumSamples == 1):
+            Indxccc = np.where(diffrepmat<0)[1][0] 
+        else:
+            Indxccc = np.zeros(NumSamples)
+            for j in range(NumSamples):
+                Indxccc[j] = np.where(diffrepmat[j,:]<0)[0][0]
+                
+            Indxccc = Indxccc.astype('int64')
+        
+        outputIndex =  PDFdistr_sortIdx[Indxccc]
+        
+        return outputIndex
 
     def get_keys_index(self):
         """
@@ -840,7 +993,5 @@ class MIChoquetIntegral:
         
         return eqt_dict
         
-            
-            
     
     

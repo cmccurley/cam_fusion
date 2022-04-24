@@ -38,6 +38,7 @@ def warn(*args, **kwargs):
     pass
 import warnings
 warnings.warn = warn
+warnings.filterwarnings('ignore')
 
 ## General packages
 import numpy as np
@@ -75,37 +76,38 @@ if __name__== "__main__":
     gtrue = data['gtrue'][0,:]
     X = data['X']
     
+#    newBags = Bags
+#    for idk, bag in enumerate(Bags):
+#        new_bag = np.append(bag, np.expand_dims(bag[:,2],axis=1), axis=1)
+#        newBags[idk] = new_bag
+    
     ######################################################################
     ########################## Training Stage ############################
     ######################################################################
     
+    ## Initialize Choquet Integral instance
     chi_genmean = MIChoquetIntegral()
     
     # Training Stage: Learn measures given training bags and labels
-#    measure_genmean, initialMeasure_genmean, Analysis_genmean = chi_genmean.train_chi_softmax(Bags, Labels, Parameters) ## generalized-mean model
     chi_genmean.train_chi_softmax(Bags, Labels, Parameters) ## generalized-mean model
     
-#    ######################################################################
-#    ########################## Testing Stage #############################
-#    ######################################################################
-#    
-#    ## Testing Stage: Given the learned measures above, compute fusion results
-#    Ytrue = computeci(Bags,gtrue);  %true label
-#    Yestimate_genmean = computeci(Bags,measure_genmean);  % learned measure by MICI generalized-mean model
-#
-#
-#    ######################################################################
-#    ############################## Plots #################################
-#    ######################################################################
-#
-#    ## Plot true and estimated labels
-#    fig, ax = plt.subplots(1,2)
-#    ax[0].scatter(X[:,0],X[:,1],c=Ytrue)
-#    ax[0].set_title('True Labels')
-#    ax[1].scatter(X[:,0],X[:,1],c=Yestimate_genmean)
-#    ax[1].set_title('Fusion result: MICI generalized-mean')
+    ######################################################################
+    ########################## Testing Stage #############################
+    ######################################################################
     
-    
-    
+    ## Testing Stage: Given the learned measures above, compute fusion results
+    Ytrue = chi_genmean.compute_chi(Bags,len(Bags),gtrue)  ## True label
+    Yestimate_genmean = chi_genmean.compute_chi(Bags,len(Bags),chi_genmean.measure)  ## Learned measure by MICI generalized-mean model
+
+    ######################################################################
+    ############################## Plots #################################
+    ######################################################################
+
+    ## Plot true and estimated labels
+    fig, ax = plt.subplots(1,2)
+    ax[0].scatter(X[:,0],X[:,1],c=Ytrue)
+    ax[0].set_title('True Labels')
+    ax[1].scatter(X[:,0],X[:,1],c=Yestimate_genmean)
+    ax[1].set_title('Fusion result: MICI generalized-mean')
     
     
