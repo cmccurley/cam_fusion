@@ -30,11 +30,15 @@ import math
 import numpy as np
 import itertools
 from scipy.special import erfinv, erfc
+from copy import deepcopy
 
-## Import numba for GPU optimization 
-from numba import jit
-from numba import cuda
-from numba import njit, prange
+from joblib import Parallel, delayed
+import multiprocessing as mp
+
+### Import numba for GPU optimization 
+#from numba import jit
+#from numba import cuda
+#from numba import njit, prange
 
 ######################################################################
 ####################### Function Definitions #########################
@@ -291,40 +295,28 @@ class MIChoquetIntegral:
         sampleVar = Parameters.sampleVar
         
         for t in range(Parameters.maxIterations):
-            childMeasure = measurePop
+            childMeasure = deepcopy(measurePop)
             childFitness = np.zeros(nPop) ## Pre-allocate array
             subsetIntervalnPop = np.zeros((nPop,nElements-1)) ## Dont need to sample mu_all=1 (last element)
             ElemIdxUpdated = np.zeros(nPop)
             JumpType = np.zeros(nPop)
             
             ###################################################################
-            ########################## Run in Parallel ########################
+            ######################## Sample Population ########################
             ###################################################################
             
-            for i in range(nPop):
-                
-                childMeasure[i,:], childFitness[i], JumpType[i] = self.sample_population(Bags, Labels, measurePop[i,:], childMeasure[i,:], lowerindex, upperindex, Parameters)
-    
-                
-    
-#                subsetInterval = self.evalInterval(measurePop[i,:], lowerindex, upperindex)
-#                subsetIntervalnPop[i,:] = subsetInterval
-#                
-#                ## Sample new value(s)
-#                z = np.random.uniform(low=0,high=1)
-#                if(z < eta): ## Small-scale mutation: update only one element of the measure
-#                    iinterv = self.sampleMultinomial_mat(subsetInterval, 1, 'descend' ) ## Update the one interval according to multinomial
-#                    childMeasure[i,:] = self.sampleMeasure(nSources, lowerindex, upperindex, childMeasure[i,:],iinterv, sampleVar)
-#                    childFitness[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
-#                    JumpType[i] = 1
-#            #                    ElemIdxUpdated[i] = iinterv
-#                else: ## Large-scale mutation: update all measure elements sort by valid interval widths in descending order
-#                    indx_subsetInterval = (-subsetInterval).argsort() ## sort the intervals in descending order
-#              
-#                    for iinterv in range(len(indx_subsetInterval)): ## for all elements
-#                        childMeasure[i,:] =  self.sampleMeasure(nSources, lowerindex, upperindex, childMeasure[i,:],iinterv, sampleVar)
-#                        childFitness[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
-#                        JumpType[i] = 2
+            if (Parameters.use_parallel == True):
+                num_cores = mp.cpu_count()
+#                Parallel(n_jobs=num_cores)(delayed(self.sample_population)(Bags, Labels, childMeasure[i,:], lowerindex, upperindex, Parameters) for i in range(nPop)) 
+                pool = mp.Pool(num_cores)
+                res = [pool.apply_async(func=self.sample_population, args=(Bags, Labels, childMeasure[i,:], lowerindex, upperindex, Parameters)) for i in range(nPop)]
+
+                for i in range(nPop):
+                    childMeasure[i,:], childFitness[i], JumpType[i] = res[i].get(timeout=1)[0], res[i].get(timeout=1)[1], res[i].get(timeout=1)[2]
+
+            else:
+                for i in range(nPop):
+                    childMeasure[i,:], childFitness[i], JumpType[i] = self.sample_population(Bags, Labels, childMeasure[i,:], lowerindex, upperindex, Parameters)
     
             ###################################################################
             ###################### Evolutionary Algorithm #####################
@@ -342,22 +334,22 @@ class MIChoquetIntegral:
             """
             Create parent + child measure pool (2P)
             """
-            fitnessPopPrev = fitnessPop
+            fitnessPopPrev = deepcopy(fitnessPop)
             ParentChildMeasure = np.concatenate((measurePop,childMeasure),axis=0) ## total 2xNPop measures
             ParentChildFitness = np.concatenate((fitnessPop,childFitness))
             
             ## Sort fitness values in descending order
             ParentChildFitness_sortIdx = (-ParentChildFitness).argsort()
-            ParentChildFitness_sortV = ParentChildFitness[ParentChildFitness_sortIdx]
+            ParentChildFitness_sortV = deepcopy(ParentChildFitness[ParentChildFitness_sortIdx])
             
             """
             Keep top 25% (P/2) from parent and child populations
             """
             measurePopNext = np.zeros((nPop,ParentChildMeasure.shape[1]))
             fitnessPopNext = np.zeros(nPop)
-            ParentChildTmpIdx1 = ParentChildFitness_sortIdx[0:int(nPop/2)] 
-            measurePopNext[0:int(nPop/2),:] = ParentChildMeasure[ParentChildTmpIdx1,:]
-            fitnessPopNext[0:int(nPop/2)] = ParentChildFitness[ParentChildTmpIdx1]
+            ParentChildTmpIdx1 = deepcopy(ParentChildFitness_sortIdx[0:int(nPop/2)]) 
+            measurePopNext[0:int(nPop/2),:] = deepcopy(ParentChildMeasure[ParentChildTmpIdx1,:])
+            fitnessPopNext[0:int(nPop/2)] = deepcopy(ParentChildFitness[ParentChildTmpIdx1])
             
             """
             For the remaining (P/2) measures, sample according to multinomial 
@@ -367,16 +359,16 @@ class MIChoquetIntegral:
             # ParentChildTmpIdx2 = randsample(ParentChildFitness_sortIdx(Parameters.nPop/2+1:end),Parameters.nPop/2);
             
             ## Method 2: Sample by multinomial distribution based on fitness
-            PDFdistr75 = ParentChildFitness_sortV[int(nPop/2)::]
+            PDFdistr75 = deepcopy(ParentChildFitness_sortV[int(nPop/2)::])
             outputIndexccc = self.sampleMultinomial_mat(PDFdistr75, int(nPop/2), 'descend')
             
-            ParentChildTmpIdx2 = ParentChildFitness_sortIdx[int(nPop/2)+outputIndexccc]
-            measurePopNext[int(nPop/2):nPop,:] = ParentChildMeasure[ParentChildTmpIdx2,:]
-            fitnessPopNext[int(nPop/2):nPop] = ParentChildFitness[ParentChildTmpIdx2]
+            ParentChildTmpIdx2 = deepcopy(ParentChildFitness_sortIdx[int(nPop/2)+outputIndexccc])
+            measurePopNext[int(nPop/2):nPop,:] = deepcopy(ParentChildMeasure[ParentChildTmpIdx2,:])
+            fitnessPopNext[int(nPop/2):nPop] = deepcopy(ParentChildFitness[ParentChildTmpIdx2])
             
             Idxrp = np.random.permutation(nPop) ## randomly change the order of the population
-            measurePop = measurePopNext[Idxrp,:]
-            fitnessPop = fitnessPopNext[Idxrp]
+            measurePop = deepcopy(measurePopNext[Idxrp,:])
+            fitnessPop = deepcopy(fitnessPopNext[Idxrp])
             
             a = np.minimum(1, np.exp(np.sum(fitnessPop)-np.sum(fitnessPopPrev))) ## fitness change ratio
             ParentChildTmpIdxall = np.concatenate((ParentChildTmpIdx1, ParentChildTmpIdx2))
@@ -384,10 +376,10 @@ class MIChoquetIntegral:
             
             ## Update best answer - printed to the terminal
             if(np.max(fitnessPop) > mVal):
-                mVal_before = mVal
+                mVal_before = deepcopy(mVal)
                 mIdx = (-fitnessPop).argsort()[0]
-                mVal = fitnessPop[mIdx]
-                measure = measurePop[mIdx,:]
+                mVal = deepcopy(fitnessPop[mIdx])
+                measure = deepcopy(measurePop[mIdx,:])
                 print(f'{mVal}')
                 print(measure)
             
@@ -411,18 +403,18 @@ class MIChoquetIntegral:
 #                    Analysis['ElemIdxUpdated'] = np.zeros((Parameters.maxIterations,len(ElemIdxUpdated))) 
 #                    Analysis['subsetIntervalnPop'] = np.zeros((subsetIntervalnPop.shape[0],subsetIntervalnPop.shape[1],Parameters.maxIterations)) 
                 else:
-                    Analysis['ParentChildMeasure'][:,:,t] = ParentChildMeasure
-                    Analysis['ParentChildFitness'][t,:] = ParentChildFitness
-                    Analysis['ParentChildTmpIdx2'][t,:] = ParentChildTmpIdx2
-                    Analysis['Idxrp'][t,:] = Idxrp
-                    Analysis['measurePop'][:,:,t] = measurePop
-                    Analysis['fitnessPop'][t,:] = fitnessPop
-                    Analysis['measureiter'][t,:] = measure
-                    Analysis['ratioa'][t] = a
-                    Analysis['ratioachild'][t] = achild
-                    Analysis['ratiomVal'][t] = mVal
+                    Analysis['ParentChildMeasure'][:,:,t] = deepcopy(ParentChildMeasure)
+                    Analysis['ParentChildFitness'][t,:] = deepcopy(ParentChildFitness)
+                    Analysis['ParentChildTmpIdx2'][t,:] = deepcopy(ParentChildTmpIdx2)
+                    Analysis['Idxrp'][t,:] = deepcopy(Idxrp)
+                    Analysis['measurePop'][:,:,t] = deepcopy(measurePop)
+                    Analysis['fitnessPop'][t,:] = deepcopy(fitnessPop)
+                    Analysis['measureiter'][t,:] = deepcopy(measure)
+                    Analysis['ratioa'][t] = deepcopy(a)
+                    Analysis['ratioachild'][t] = deepcopy(achild)
+                    Analysis['ratiomVal'][t] = deepcopy(mVal)
                     Analysis['ratio'][t] = np.exp(np.sum(fitnessPop)-np.sum(fitnessPopPrev))
-                    Analysis['JumpType'][t,:] = JumpType
+                    Analysis['JumpType'][t,:] = deepcopy(JumpType)
 #                    Analysis['ElemIdxUpdated'][t,:] = ElemIdxUpdated
 #                    Analysis['subsetIntervalnPop'][:,:,t] = subsetIntervalnPop  
             
@@ -467,9 +459,11 @@ class MIChoquetIntegral:
         for b_idx in range(self.B):
             ci = self.compute_chi(Bags[b_idx], 1, measure)
             if(Labels[b_idx] == 0):  ## Negative bag, label = 0
-                fitness = fitness - (np.mean((ci**(2*p1)).round(5)).round(5))**(1/p1)
+#                fitness = fitness - ((np.mean((ci**(2*p1)).round(5)).round(5))**(1/p1)).round(5)
+                fitness = fitness - (np.mean(ci**(2*p1))**(1/p1))
             else: ## Positive bag, label=1
-                fitness = fitness - (np.mean(((ci-1)**(2*p2)).round(5)).round(5))**(1/p2)
+#                fitness = fitness - ((np.mean(((ci-1)**(2*p2)).round(5)).round(5))**(1/p2)).round(5)
+                fitness = fitness - (np.mean((ci-1)**(2*p2))**(1/p2))
     
             ## Sanity check
             if (np.isinf(fitness) or not(np.isreal(fitness)) or np.isnan(fitness)):
@@ -478,7 +472,7 @@ class MIChoquetIntegral:
                 
         return fitness
     
-    def sample_population(self,Bags, Labels, measurePop, childMeasure, lowerindex, upperindex, Parameters):
+    def sample_population(self, Bags, Labels, childMeasure, lowerindex, upperindex, Parameters):
         """
         ===========================================================================
         % Evaluate the fitness a measure, similar to evalFitness_minmax() for
@@ -499,22 +493,22 @@ class MIChoquetIntegral:
         ===========================================================================
         """
         
-        subsetInterval = self.evalInterval(measurePop, lowerindex, upperindex)
+        subsetInterval = self.evalInterval(childMeasure, lowerindex, upperindex)
         
         ## Sample new value(s)
         z = np.random.uniform(low=0,high=1)
         if(z < Parameters.eta): ## Small-scale mutation: update only one element of the measure
             iinterv = self.sampleMultinomial_mat(subsetInterval, 1, 'descend' ) ## Update the one interval according to multinomial
-            childMeasure = self.sampleMeasure(self.N, lowerindex, upperindex, childMeasure,iinterv, Parameters.sampleVar)
-            childFitness = self.evalFitness_softmax(Bags, Labels, measurePop)
+            childMeasure = self.sampleMeasure(self.N, lowerindex, upperindex, childMeasure, iinterv, Parameters.sampleVar)
+            childFitness = self.evalFitness_softmax(Bags, Labels, childMeasure)
             JumpType = 1
 
         else: ## Large-scale mutation: update all measure elements sort by valid interval widths in descending order
             indx_subsetInterval = (-subsetInterval).argsort() ## sort the intervals in descending order
       
             for iinterv in range(len(indx_subsetInterval)): ## for all elements
-                childMeasure =  self.sampleMeasure(self.N, lowerindex, upperindex, childMeasure,iinterv, Parameters.sampleVar)
-                childFitness = self.evalFitness_softmax(Bags, Labels, measurePop)
+                childMeasure =  self.sampleMeasure(self.N, lowerindex, upperindex, childMeasure, iinterv, Parameters.sampleVar)
+                childFitness = self.evalFitness_softmax(Bags, Labels, childMeasure)
                 JumpType = 2
         
         return childMeasure, childFitness, JumpType
