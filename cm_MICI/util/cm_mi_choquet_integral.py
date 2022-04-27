@@ -159,47 +159,137 @@ class MIChoquetIntegral:
         fm = dict()
         for key in index_keys:
             fm[key] = measure[index_keys[key]]
-        
+
         #######################################################################
-        ##################### Compute ChI on Single Bag #######################
+        ######################## Compute ChI Vectorized #######################
         #######################################################################
-        if (nBags == 1): ## Single bag
-            ch = np.zeros(Bag.shape[0])
         
-            for inst_idx in range(Bag.shape[0]):
-                x = Bag[inst_idx,:]
-                n = len(x)
-                pi_i = np.argsort(x)[::-1][:n] + 1
-                ch[inst_idx] = x[pi_i[0] - 1] * (fm[str(pi_i[:1])])
-                for i in range(1, n):
-                    latt_pti = np.sort(pi_i[:i + 1])
-                    latt_ptimin1 = np.sort(pi_i[:i])
-                    ch[inst_idx] = ch[inst_idx] + x[pi_i[i] - 1] * (fm[str(latt_pti)] - fm[str(latt_ptimin1)])
+        ## Set up variables
+        nPntsBags = self.M
+        nSources = self.N
+        measureNumEach = self.measureNumEach ## Number in each tier of lattice, bottom-up
+        measureNumCumSum = self.measureNumCumSum ## Cumulative sum of measures, bottom-up
+        measureEach = self.measureEach ## The actual indices
+        
+        ## Precompute differences and indices for each bag (diffM = difference in measures)
+        diffM = []
+        for i in range(nBags):
             
-            y = ch
-        
-        #######################################################################
-        #################### Compute ChI on Multiple Bags #####################
-        #######################################################################
-        else: ## Multiple bags, concatenate outputs
-            for b in range(nBags):
-            
-                ch = np.zeros(Bag[b].shape[0])
-        
-                for inst_idx in range(Bag[b].shape[0]):
-                    x = Bag[b][inst_idx,:]
-                    n = len(x)
-                    pi_i = np.argsort(x)[::-1][:n] + 1
-                    ch[inst_idx] = x[pi_i[0] - 1] * (fm[str(pi_i[:1])])
-                    for i in range(1, n):
-                        latt_pti = np.sort(pi_i[:i + 1])
-                        latt_ptimin1 = np.sort(pi_i[:i])
-                        ch[inst_idx] = ch[inst_idx] + x[pi_i[i] - 1] * (fm[str(latt_pti)] - fm[str(latt_ptimin1)])
+            if (nBags == 1):
+                bag = deepcopy(Bag)
+            else:
+                bag = deepcopy(Bag[i])
                 
-                if not(b):
-                    y = ch
-                else:
-                    y = np.concatenate((y,ch))
+            if not(i):
+                tmp = np.zeros((nBags,bag.shape[1]-1),dtype=np.object)
+            
+            ## Sort values in descending order
+            indx = (bag).argsort(axis=1)
+            indx = indx[:,::-1]
+            v = np.sort(bag,axis=1)[:,::-1]
+            
+            vz = np.concatenate((np.zeros((v.shape[0],1)), v), axis=1) - np.concatenate((v,np.zeros((v.shape[0],1))), axis=1)
+            diffM.append(vz[:,1::])
+            for j in range((diffM[i].shape[1]-1)): ## # of sources in the combination (e.g. j=1 for g_1, j=2 for g_12)
+                
+                tmp_arr = np.zeros((bag.shape[0],len(np.arange(0,j+1))))
+                
+                for n in range(bag.shape[0]):
+                    tmp_arr[n,:] = np.sort(indx[n,0:j+1])
+
+                tmp[i,j] = tmp_arr
+        
+        sec_start_inds = np.zeros(nSources, dtype='int')
+        nElem_prev = 0
+        for j in range(nSources-1):
+            if not(j): ## singleton        
+                sec_start_inds[j] = 0
+            else:  ## non-singleton
+                nElem_prev = nElem_prev + (measureNumEach[j-1]-1)
+                sec_start_inds[j] = nElem_prev
+      
+        bag_row_ids = np.zeros((nBags,),dtype=np.object)
+      
+#        bag_row_ids = [] ## the row indices of measure used for each bag
+        for i in range(nBags):
+            nPnts1, nSources = diffM[i].shape
+            tmp_row_ids = np.zeros((nPnts1,nSources-1), dtype='int16')
+            
+            for n in range(bag.shape[0]):             
+                for j in range(nSources-1): 
+                    if not(j):
+                        tmp_row_ids[n,j] = tmp[i,j][n,0]
+                    else:  ## non-singleton
+                        elem = measureEach[j] - 1 ## the number of combinations, e.g., (1,2),(1,3),(2,3)
+                        for k in range(elem.shape[0]):
+                            if (np.sum(tmp[i,j][n,:].astype('int') == (elem[k,:])) == elem.shape[1]):
+                                row_id = k+1
+                    
+                                tmp_row_ids[n,j] = sec_start_inds[j] + row_id
+            
+            if (nBags == 1):
+                bag_row_ids = np.zeros((nBags,),dtype=np.object)
+                bag_row_ids[0] = tmp_row_ids
+            else:
+                bag_row_ids[i] = tmp_row_ids
+
+        ## Create oneV cell matrix
+        oneV = []
+        for i in range(nBags):
+            oneV.append(np.ones((nPntsBags[i],1)))
+ 
+        diffM_ns = deepcopy(diffM)
+        bag_row_ids_ns = deepcopy(bag_row_ids)
+        
+        ## Compute CI for non-singleton bags
+        for i in range(len(diffM_ns)):
+            ci = np.sum(np.multiply(diffM_ns[i],np.concatenate((measure[bag_row_ids_ns[i]], oneV[i]),axis=1)),axis=1)
+            
+            if not(i):
+                y = ci
+            else:
+                y = np.concatenate((y,ci))
+   
+#        #######################################################################
+#        ##################### Compute ChI on Single Bag #######################
+#        #######################################################################
+#        if (nBags == 1): ## Single bag
+#            ch = np.zeros(Bag.shape[0])
+#        
+#            for inst_idx in range(Bag.shape[0]):
+#                x = Bag[inst_idx,:]
+#                n = len(x)
+#                pi_i = np.argsort(x)[::-1][:n] + 1
+#                ch[inst_idx] = x[pi_i[0] - 1] * (fm[str(pi_i[:1])])
+#                for i in range(1, n):
+#                    latt_pti = np.sort(pi_i[:i + 1])
+#                    latt_ptimin1 = np.sort(pi_i[:i])
+#                    ch[inst_idx] = ch[inst_idx] + x[pi_i[i] - 1] * (fm[str(latt_pti)] - fm[str(latt_ptimin1)])
+#            
+#            y = ch
+#        
+#        #######################################################################
+#        #################### Compute ChI on Multiple Bags #####################
+#        #######################################################################
+#        else: ## Multiple bags, concatenate outputs
+#            for b in range(nBags):
+#            
+#                ch = np.zeros(Bag[b].shape[0])
+#        
+#                for inst_idx in range(Bag[b].shape[0]):
+#                    x = Bag[b][inst_idx,:]
+#                    n = len(x)
+#                    pi_i = np.argsort(x)[::-1][:n] + 1
+#                    ch[inst_idx] = x[pi_i[0] - 1] * (fm[str(pi_i[:1])])
+#                    for i in range(1, n):
+#                        latt_pti = np.sort(pi_i[:i + 1])
+#                        latt_ptimin1 = np.sort(pi_i[:i])
+#                        ch[inst_idx] = ch[inst_idx] + x[pi_i[i] - 1] * (fm[str(latt_pti)] - fm[str(latt_ptimin1)])
+#                
+#                if not(b):
+#                    y = ch
+#                else:
+#                    y = np.concatenate((y,ch))
             
         return y
     
@@ -459,10 +549,8 @@ class MIChoquetIntegral:
         for b_idx in range(self.B):
             ci = self.compute_chi(Bags[b_idx], 1, measure)
             if(Labels[b_idx] == 0):  ## Negative bag, label = 0
-#                fitness = fitness - ((np.mean((ci**(2*p1)).round(5)).round(5))**(1/p1)).round(5)
                 fitness = fitness - (np.mean(ci**(2*p1))**(1/p1))
             else: ## Positive bag, label=1
-#                fitness = fitness - ((np.mean(((ci-1)**(2*p2)).round(5)).round(5))**(1/p2)).round(5)
                 fitness = fitness - (np.mean((ci-1)**(2*p2))**(1/p2))
     
             ## Sanity check
@@ -917,6 +1005,28 @@ class MIChoquetIntegral:
         outputIndex =  PDFdistr_sortIdx[Indxccc]
         
         return outputIndex
+
+
+#    def ismember_findrow_mex_my(self,A,B):
+#        """
+#        =======================================================================
+#        % Find the index of which row in matrix B fully contains A vector
+#        % Input:
+#        %  Example: A=[3 4];B=[1 2 3;1 2 4;1 3 4; 2 3 4];
+#        % Output:
+#        % Example: aaa = [1,1] (logical); bbb = [2,3,0,...] (12x1 vector, the first
+#        % 3&4 element in B); ccc=[3;4] (THIS IS THE INDEX FOR ROW NUMBER!)
+#        % Uses the "ismember_findrow_mex.c" code. 
+#        =======================================================================
+#        """
+#        
+#        input2 =reshape(B',[size(B,1)*size(B,2),1]);
+#        numrow = size(B,2);
+#        [aaa,bbb,ccc]=ismember_findrow_mex(A',input2,numrow);
+#        ccc(ccc==0)=[];
+#        
+#        end
+#        return aaa,bbb,ccc
 
     def get_keys_index(self):
         """

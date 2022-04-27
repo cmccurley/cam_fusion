@@ -74,7 +74,7 @@ def set_parameters(args):
     parser.add_argument('--mean', help='Mean of ci in fitness function. Is always set to 1 if the positive label is "1".', default=1.0, type=float)
     parser.add_argument('--analysis', action='store_true', help='If ="1", record all intermediate results.', default=True)
     parser.add_argument('--p', help='p power value for the softmax. p(1) should->Inf, p(2) should->-Inf.', nargs='+', default=[10,-10])
-    parser.add_argument('--use_parallel', action='store_true', help='If ="1", use parallel processing for population sampling.', default=True)
+    parser.add_argument('--use_parallel', action='store_true', help='If ="1", use parallel processing for population sampling.', default=False)
 
     return parser.parse_args(args)
 
