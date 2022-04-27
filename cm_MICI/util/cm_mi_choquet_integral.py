@@ -430,14 +430,14 @@ class MIChoquetIntegral:
             
             ## Sort fitness values in descending order
             ParentChildFitness_sortIdx = (-ParentChildFitness).argsort()
-            ParentChildFitness_sortV = deepcopy(ParentChildFitness[ParentChildFitness_sortIdx])
+            ParentChildFitness_sortV = ParentChildFitness[ParentChildFitness_sortIdx]
             
             """
             Keep top 25% (P/2) from parent and child populations
             """
             measurePopNext = np.zeros((nPop,ParentChildMeasure.shape[1]))
             fitnessPopNext = np.zeros(nPop)
-            ParentChildTmpIdx1 = deepcopy(ParentChildFitness_sortIdx[0:int(nPop/2)]) 
+            ParentChildTmpIdx1 = ParentChildFitness_sortIdx[0:int(nPop/2)]
             measurePopNext[0:int(nPop/2),:] = deepcopy(ParentChildMeasure[ParentChildTmpIdx1,:])
             fitnessPopNext[0:int(nPop/2)] = deepcopy(ParentChildFitness[ParentChildTmpIdx1])
             
@@ -451,7 +451,7 @@ class MIChoquetIntegral:
             ## Method 2: Sample by multinomial distribution based on fitness
             PDFdistr75 = deepcopy(ParentChildFitness_sortV[int(nPop/2)::])
             outputIndexccc = self.sampleMultinomial_mat(PDFdistr75, int(nPop/2), 'descend')
-            
+
             ParentChildTmpIdx2 = deepcopy(ParentChildFitness_sortIdx[int(nPop/2)+outputIndexccc])
             measurePopNext[int(nPop/2):nPop,:] = deepcopy(ParentChildMeasure[ParentChildTmpIdx2,:])
             fitnessPopNext[int(nPop/2):nPop] = deepcopy(ParentChildFitness[ParentChildTmpIdx2])
@@ -470,8 +470,8 @@ class MIChoquetIntegral:
                 mIdx = (-fitnessPop).argsort()[0]
                 mVal = deepcopy(fitnessPop[mIdx])
                 measure = deepcopy(measurePop[mIdx,:])
-                print(f'{mVal}')
-                print(measure)
+#                print(f'{mVal}')
+#                print(measure)
             
             ###################################################################
             ##################### Update Analysis Tracker #####################
@@ -509,8 +509,20 @@ class MIChoquetIntegral:
 #                    Analysis['subsetIntervalnPop'][:,:,t] = subsetIntervalnPop  
             
             ## Update terminal 
-            if(not(t % 2)):
+            if(not(t % 10)):
+                print('\n')
                 print(f'Iteration: {str(t)}')
+                print(f'Best fitness: {mVal.round(6)}')
+                print(measure.round(4))
+                
+            del fitnessPopNext
+            del measurePopNext
+            del PDFdistr75
+            del fitnessPopPrev
+            del ParentChildMeasure
+            del ParentChildFitness
+            del childMeasure
+            del childFitness
     
             ## Stop if we've found a measure meeting our desired level of fitness
             if (np.abs(mVal - mVal_before) <= Parameters.fitnessThresh):
@@ -1005,28 +1017,6 @@ class MIChoquetIntegral:
         outputIndex =  PDFdistr_sortIdx[Indxccc]
         
         return outputIndex
-
-
-#    def ismember_findrow_mex_my(self,A,B):
-#        """
-#        =======================================================================
-#        % Find the index of which row in matrix B fully contains A vector
-#        % Input:
-#        %  Example: A=[3 4];B=[1 2 3;1 2 4;1 3 4; 2 3 4];
-#        % Output:
-#        % Example: aaa = [1,1] (logical); bbb = [2,3,0,...] (12x1 vector, the first
-#        % 3&4 element in B); ccc=[3;4] (THIS IS THE INDEX FOR ROW NUMBER!)
-#        % Uses the "ismember_findrow_mex.c" code. 
-#        =======================================================================
-#        """
-#        
-#        input2 =reshape(B',[size(B,1)*size(B,2),1]);
-#        numrow = size(B,2);
-#        [aaa,bbb,ccc]=ismember_findrow_mex(A',input2,numrow);
-#        ccc(ccc==0)=[];
-#        
-#        end
-#        return aaa,bbb,ccc
 
     def get_keys_index(self):
         """
