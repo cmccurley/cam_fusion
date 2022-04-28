@@ -480,6 +480,10 @@ class MIChoquetIntegral:
 
                 for i in range(nPop):
                     childMeasure[i,:], childFitness[i], JumpType[i] = res[i].get(timeout=1)[0], res[i].get(timeout=1)[1], res[i].get(timeout=1)[2]
+                
+                pool.close()
+                pool.join()
+
 
             else:
                 for i in range(nPop):
@@ -586,11 +590,11 @@ class MIChoquetIntegral:
 #                    Analysis['subsetIntervalnPop'][:,:,t] = subsetIntervalnPop  
             
             ## Update terminal 
-            if(not(t % 10)):
-                print('\n')
-                print(f'Iteration: {str(t)}')
-                print(f'Best fitness: {mVal.round(6)}')
-                print(measure.round(4))
+#            if(not(t % 10)):
+            print('\n')
+            print(f'Iteration: {str(t)}')
+            print(f'Best fitness: {mVal.round(6)}')
+            print(measure.round(4))
                 
             del fitnessPopNext
             del measurePopNext
