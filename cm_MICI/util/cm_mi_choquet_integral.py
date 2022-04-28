@@ -125,7 +125,7 @@ class MIChoquetIntegral:
 
         
         ## Estimate measure parameters using evolutionary algorithm
-        print("Number Sources : ", self.N, "; Number Training Bags : ", self.B)
+        print("\nNumber Sources : ", self.N, "; Number Training Bags : ", self.B)
         measure, initialMeasure, Analysis = self.produce_lattice_softmax(Bags, Labels, Parameters)
         
         fm = dict()
@@ -215,17 +215,27 @@ class MIChoquetIntegral:
             nPnts1, nSources = diffM[i].shape
             tmp_row_ids = np.zeros((nPnts1,nSources-1), dtype='int16')
             
-            for n in range(bag.shape[0]):             
+            for n in range(bag.shape[0]):   
                 for j in range(nSources-1): 
                     if not(j):
                         tmp_row_ids[n,j] = tmp[i,j][n,0]
                     else:  ## non-singleton
                         elem = measureEach[j] - 1 ## the number of combinations, e.g., (1,2),(1,3),(2,3)
-                        for k in range(elem.shape[0]):
-                            if (np.sum(tmp[i,j][n,:].astype('int') == (elem[k,:])) == elem.shape[1]):
-                                row_id = k+1
-                    
-                                tmp_row_ids[n,j] = sec_start_inds[j] + row_id
+                        row_id = np.where((elem == tmp[i,j][n,:].astype('int')).all(axis=1))[0][0] + 1
+                        tmp_row_ids[n,j] = sec_start_inds[j] + row_id
+            
+#            ## Find index of each element in each walk
+#            for n in range(bag.shape[0]):             
+#                for j in range(nSources-1): 
+#                    if not(j):
+#                        tmp_row_ids[n,j] = tmp[i,j][n,0]
+#                    else:  ## non-singleton
+#                        elem = measureEach[j] - 1 ## the number of combinations, e.g., (1,2),(1,3),(2,3)
+#                        for k in range(elem.shape[0]):
+#                            if (np.sum(tmp[i,j][n,:].astype('int') == (elem[k,:])) == elem.shape[1]):
+#                                row_id = k+1
+#                    
+#                                tmp_row_ids[n,j] = sec_start_inds[j] + row_id
             
             if (nBags == 1):
                 bag_row_ids = np.zeros((nBags,),dtype=np.object)
@@ -509,11 +519,11 @@ class MIChoquetIntegral:
 #                    Analysis['subsetIntervalnPop'][:,:,t] = subsetIntervalnPop  
             
             ## Update terminal 
-            if(not(t % 10)):
-                print('\n')
-                print(f'Iteration: {str(t)}')
-                print(f'Best fitness: {mVal.round(6)}')
-                print(measure.round(4))
+#            if(not(t % 10)):
+            print('\n')
+            print(f'Iteration: {str(t)}')
+            print(f'Best fitness: {mVal.round(6)}')
+            print(measure.round(4))
                 
             del fitnessPopNext
             del measurePopNext

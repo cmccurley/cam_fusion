@@ -92,7 +92,7 @@ if __name__== "__main__":
     chi_genmean.train_chi_softmax(Bags, Labels, Parameters) ## generalized-mean model
     
     measure = chi_genmean.measure
-    Analysis = chi_genmean.Analysis
+#    Analysis = chi_genmean.Analysis
     
     ######################################################################
     ########################## Testing Stage #############################
