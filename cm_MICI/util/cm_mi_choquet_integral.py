@@ -354,6 +354,8 @@ class MIChoquetIntegral:
         measureEach = self.measureEach
         index_keys = self.index_keys
         sampleVar = Parameters.sampleVar
+        nBags = self.B
+        nPntsBags = self.M
         
         #######################################################################
         ################## Compute Initial Measure Width Bounds ###############
@@ -361,6 +363,71 @@ class MIChoquetIntegral:
         
         ## Get measure indices for lower and upper bounds on each measure element
         lowerindex, upperindex = self.compute_bounds()
+        
+        #######################################################################
+        #################### Pre-compute Measure Differences ##################
+        #######################################################################
+        
+        ## Precompute differences and indices for each bag (diffM = difference in measures)
+        diffM = []
+        for i in range(nBags):
+            
+            bag = Bags[i]
+                
+            if not(i):
+                tmp = np.zeros((nBags,bag.shape[1]-1),dtype=np.object)
+            
+            ## Sort values in descending order
+            indx = (bag).argsort(axis=1)
+            indx = indx[:,::-1]
+            v = np.sort(bag,axis=1)[:,::-1]
+            
+            vz = np.concatenate((np.zeros((v.shape[0],1)), v), axis=1) - np.concatenate((v,np.zeros((v.shape[0],1))), axis=1)
+            diffM.append(vz[:,1::])
+            for j in range((diffM[i].shape[1]-1)): ## # of sources in the combination (e.g. j=1 for g_1, j=2 for g_12)
+                
+                tmp_arr = np.zeros((bag.shape[0],len(np.arange(0,j+1))))
+                
+                for n in range(bag.shape[0]):
+                    tmp_arr[n,:] = np.sort(indx[n,0:j+1])
+
+                tmp[i,j] = tmp_arr
+        
+        sec_start_inds = np.zeros(nSources, dtype='int')
+        nElem_prev = 0
+        for j in range(nSources-1):
+            if not(j): ## singleton        
+                sec_start_inds[j] = 0
+            else:  ## non-singleton
+                nElem_prev = nElem_prev + (measureNumEach[j-1]-1)
+                sec_start_inds[j] = nElem_prev
+      
+        bag_row_ids = np.zeros((nBags,),dtype=np.object)
+      
+#        bag_row_ids = [] ## the row indices of measure used for each bag
+        for i in range(nBags):
+            nPnts1, nSources = diffM[i].shape
+            tmp_row_ids = np.zeros((nPnts1,nSources-1), dtype='int16')
+            
+            for n in range(bag.shape[0]):   
+                for j in range(nSources-1): 
+                    if not(j):
+                        tmp_row_ids[n,j] = tmp[i,j][n,0]
+                    else:  ## non-singleton
+                        elem = measureEach[j] - 1 ## the number of combinations, e.g., (1,2),(1,3),(2,3)
+                        row_id = np.where((elem == tmp[i,j][n,:].astype('int')).all(axis=1))[0][0] + 1
+                        tmp_row_ids[n,j] = sec_start_inds[j] + row_id
+            
+            if (nBags == 1):
+                bag_row_ids = np.zeros((nBags,),dtype=np.object)
+                bag_row_ids[0] = tmp_row_ids
+            else:
+                bag_row_ids[i] = tmp_row_ids
+
+        ## Create oneV cell matrix
+        oneV = []
+        for i in range(nBags):
+            oneV.append(np.ones((nPntsBags[i],1)))
 
         #######################################################################
         ###################### Initialize Measure Elements ####################
@@ -376,12 +443,12 @@ class MIChoquetIntegral:
         if (trueInitMeasure is not None): 
             for i in range(nPop):
                 measurePop[i,:] = trueInitMeasure
-                fitnessPop[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
+                fitnessPop[i] = self.evalFitness_softmax(Labels, measurePop[i,:], nPntsBags, oneV, bag_row_ids, diffM)
             
         else:  ## Initialize measure population randomly
             for i in range(nPop):
                 measurePop[i,:] = self.sampleMeasure(nSources,lowerindex,upperindex);
-                fitnessPop[i] = self.evalFitness_softmax(Bags, Labels, measurePop[i,:])
+                fitnessPop[i] = self.evalFitness_softmax(Labels, measurePop[i,:], nPntsBags, oneV, bag_row_ids, diffM)
         
         #######################################################################
         #################### Iterate through Optimization #####################
@@ -409,14 +476,14 @@ class MIChoquetIntegral:
                 num_cores = mp.cpu_count()
 #                Parallel(n_jobs=num_cores)(delayed(self.sample_population)(Bags, Labels, childMeasure[i,:], lowerindex, upperindex, Parameters) for i in range(nPop)) 
                 pool = mp.Pool(num_cores)
-                res = [pool.apply_async(func=self.sample_population, args=(Bags, Labels, childMeasure[i,:], lowerindex, upperindex, Parameters)) for i in range(nPop)]
+                res = [pool.apply_async(func=self.sample_population, args=(Bags, Labels, childMeasure[i,:], lowerindex, upperindex, nPntsBags, oneV, bag_row_ids, diffM, Parameters)) for i in range(nPop)]
 
                 for i in range(nPop):
                     childMeasure[i,:], childFitness[i], JumpType[i] = res[i].get(timeout=1)[0], res[i].get(timeout=1)[1], res[i].get(timeout=1)[2]
 
             else:
                 for i in range(nPop):
-                    childMeasure[i,:], childFitness[i], JumpType[i] = self.sample_population(Bags, Labels, childMeasure[i,:], lowerindex, upperindex, Parameters)
+                    childMeasure[i,:], childFitness[i], JumpType[i] = self.sample_population(Bags, Labels, childMeasure[i,:], lowerindex, upperindex, nPntsBags, oneV, bag_row_ids, diffM, Parameters)
     
             ###################################################################
             ###################### Evolutionary Algorithm #####################
@@ -519,11 +586,11 @@ class MIChoquetIntegral:
 #                    Analysis['subsetIntervalnPop'][:,:,t] = subsetIntervalnPop  
             
             ## Update terminal 
-#            if(not(t % 10)):
-            print('\n')
-            print(f'Iteration: {str(t)}')
-            print(f'Best fitness: {mVal.round(6)}')
-            print(measure.round(4))
+            if(not(t % 10)):
+                print('\n')
+                print(f'Iteration: {str(t)}')
+                print(f'Best fitness: {mVal.round(6)}')
+                print(measure.round(4))
                 
             del fitnessPopNext
             del measurePopNext
@@ -540,8 +607,49 @@ class MIChoquetIntegral:
     
         return measure, initialMeasure, Analysis
     
-    def evalFitness_softmax(self, Bags, Labels, measure):
-    
+#    def evalFitness_softmax(self, Bags, Labels, measure):
+#    
+#        """
+#        ===========================================================================
+#        % Evaluate the fitness a measure, similar to evalFitness_minmax() for
+#        % classification but uses generalized mean (sometimes also named "softmax") model
+#        %
+#        % INPUT
+#        %    Labels         - 1xNumTrainBags double  - Training labels for each bag
+#        %    measure        - measure to be evaluated after update
+#        %    nPntsBags      - 1xNumTrainBags double    - number of points in each bag
+#        %    bag_row_ids    - the row indices of measure used for each bag
+#        %    diffM          - Precompute differences for each bag
+#        %
+#        % OUTPUT
+#        %   fitness         - the fitness value using min(sum(min((ci-d)^2))) for regression.
+#        %
+#        % Written by: X. Du 03/2018
+#        %
+#        ===========================================================================
+#        """
+#        
+#        p1 = self.p[0]
+#        p2 = self.p[1]
+#        
+#        fitness = 0
+#       
+#        ## Compute CI for non-singleton bags
+#        for b_idx in range(self.B):
+#            ci = self.compute_chi(Bags[b_idx], 1, measure)
+#            if(Labels[b_idx] == 0):  ## Negative bag, label = 0
+#                fitness = fitness - (np.mean(ci**(2*p1))**(1/p1))
+#            else: ## Positive bag, label=1
+#                fitness = fitness - (np.mean((ci-1)**(2*p2))**(1/p2))
+#    
+#            ## Sanity check
+#            if (np.isinf(fitness) or not(np.isreal(fitness)) or np.isnan(fitness)):
+#                fitness = np.real(fitness)
+#                fitness = -10000000
+#                
+#        return fitness
+        
+    def evalFitness_softmax(self, Labels, measure, nPntsBags, oneV, bag_row_ids, diffM):
         """
         ===========================================================================
         % Evaluate the fitness a measure, similar to evalFitness_minmax() for
@@ -569,7 +677,7 @@ class MIChoquetIntegral:
        
         ## Compute CI for non-singleton bags
         for b_idx in range(self.B):
-            ci = self.compute_chi(Bags[b_idx], 1, measure)
+            ci = np.sum(np.multiply(diffM[b_idx],np.concatenate((measure[bag_row_ids[b_idx]], oneV[b_idx]),axis=1)),axis=1)
             if(Labels[b_idx] == 0):  ## Negative bag, label = 0
                 fitness = fitness - (np.mean(ci**(2*p1))**(1/p1))
             else: ## Positive bag, label=1
@@ -579,10 +687,10 @@ class MIChoquetIntegral:
             if (np.isinf(fitness) or not(np.isreal(fitness)) or np.isnan(fitness)):
                 fitness = np.real(fitness)
                 fitness = -10000000
-                
+                    
         return fitness
     
-    def sample_population(self, Bags, Labels, childMeasure, lowerindex, upperindex, Parameters):
+    def sample_population(self, Bags, Labels, childMeasure, lowerindex, upperindex, nPntsBags, oneV, bag_row_ids, diffM, Parameters):
         """
         ===========================================================================
         % Evaluate the fitness a measure, similar to evalFitness_minmax() for
@@ -610,7 +718,7 @@ class MIChoquetIntegral:
         if(z < Parameters.eta): ## Small-scale mutation: update only one element of the measure
             iinterv = self.sampleMultinomial_mat(subsetInterval, 1, 'descend' ) ## Update the one interval according to multinomial
             childMeasure = self.sampleMeasure(self.N, lowerindex, upperindex, childMeasure, iinterv, Parameters.sampleVar)
-            childFitness = self.evalFitness_softmax(Bags, Labels, childMeasure)
+            childFitness = self.evalFitness_softmax(Labels, childMeasure, nPntsBags, oneV, bag_row_ids, diffM)
             JumpType = 1
 
         else: ## Large-scale mutation: update all measure elements sort by valid interval widths in descending order
@@ -618,7 +726,7 @@ class MIChoquetIntegral:
       
             for iinterv in range(len(indx_subsetInterval)): ## for all elements
                 childMeasure =  self.sampleMeasure(self.N, lowerindex, upperindex, childMeasure, iinterv, Parameters.sampleVar)
-                childFitness = self.evalFitness_softmax(Bags, Labels, childMeasure)
+                childFitness = self.evalFitness_softmax(Labels, childMeasure, nPntsBags, oneV, bag_row_ids, diffM)
                 JumpType = 2
         
         return childMeasure, childFitness, JumpType
