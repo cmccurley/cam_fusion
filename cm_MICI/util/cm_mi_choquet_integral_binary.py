@@ -33,6 +33,7 @@ Created on Thu Jan 20 16:52:06 2022
 ######################################################################
 ######################### Import Packages ############################
 ######################################################################
+import random
 import numpy as np
 import itertools
 from scipy.special import erfinv, erfc
@@ -43,7 +44,7 @@ import multiprocessing as mp
 ####################### Function Definitions #########################
 ######################################################################
 
-class MIChoquetIntegral:
+class BinaryMIChoquetIntegral:
 
     def __init__(self):
         """
@@ -56,7 +57,7 @@ class MIChoquetIntegral:
         """
 
 
-    def train_chi_softmax(self, Bags, Labels, Parameters):
+    def train_chi(self, Bags, Labels, Parameters):
         """
         ===========================================================================
         % This trains the instance of the MI Choquet Integral by optimizing the 
@@ -130,8 +131,9 @@ class MIChoquetIntegral:
 
         
         ## Estimate measure parameters using evolutionary algorithm
+        print("\nTraining MICI with Binary Fuzzy Measure...")
         print("\nNumber Sources : ", self.N, "; Number Training Bags : ", self.B)
-        measure, initialMeasure, Analysis = self.produce_lattice_softmax(Bags, Labels, Parameters)
+        measure, initialMeasure, Analysis = self.produce_lattice(Bags, Labels, Parameters)
         
         fm = dict()
         for key in self.index_keys:
@@ -300,7 +302,7 @@ class MIChoquetIntegral:
             
         return y
     
-    def produce_lattice_softmax(self, Bags, Labels, Parameters, trueInitMeasure=None):
+    def produce_lattice(self, Bags, Labels, Parameters, trueInitMeasure=None):
         
         """ 
         ===============================================================================
@@ -434,12 +436,12 @@ class MIChoquetIntegral:
         if (trueInitMeasure is not None): 
             for i in range(nPop):
                 measurePop[i,:] = trueInitMeasure
-                fitnessPop[i] = self.evalFitness_softmax(Labels, measurePop[i,:], nPntsBags, oneV, bag_row_ids, diffM)
+                fitnessPop[i] = self.evalFitness_minmax(Labels, measurePop[i,:], nPntsBags, oneV, bag_row_ids, diffM)
             
         else:  ## Initialize measure population randomly
             for i in range(nPop):
                 measurePop[i,:] = self.sampleMeasure(nSources,lowerindex,upperindex);
-                fitnessPop[i] = self.evalFitness_softmax(Labels, measurePop[i,:], nPntsBags, oneV, bag_row_ids, diffM)
+                fitnessPop[i] = self.evalFitness_minmax(Labels, measurePop[i,:], nPntsBags, oneV, bag_row_ids, diffM)
         
         #######################################################################
         #################### Iterate through Optimization #####################
@@ -450,6 +452,8 @@ class MIChoquetIntegral:
         measure = measurePop[indx,:]  
         initialMeasure = measure
         mVal_before = -10000
+        
+        q=0
         
         for t in range(Parameters.maxIterations):
             childMeasure = deepcopy(measurePop)
@@ -588,55 +592,15 @@ class MIChoquetIntegral:
             del childFitness
     
             ## Stop if we've found a measure meeting our desired level of fitness
-            if (np.abs(mVal - mVal_before) <= Parameters.fitnessThresh):
+            if (q >= Parameters.Q):
                 break
+            
+            q+=1
     
         return measure, initialMeasure, Analysis
     
-#    ## This works but is slow!!!
-#    def evalFitness_softmax(self, Bags, Labels, measure):
-#    
-#        """
-#        ===========================================================================
-#        % Evaluate the fitness a measure, similar to evalFitness_minmax() for
-#        % classification but uses generalized mean (sometimes also named "softmax") model
-#        %
-#        % INPUT
-#        %    Labels         - 1xNumTrainBags double  - Training labels for each bag
-#        %    measure        - measure to be evaluated after update
-#        %    nPntsBags      - 1xNumTrainBags double    - number of points in each bag
-#        %    bag_row_ids    - the row indices of measure used for each bag
-#        %    diffM          - Precompute differences for each bag
-#        %
-#        % OUTPUT
-#        %   fitness         - the fitness value using min(sum(min((ci-d)^2))) for regression.
-#        %
-#        % Written by: X. Du 03/2018
-#        %
-#        ===========================================================================
-#        """
-#        
-#        p1 = self.p[0]
-#        p2 = self.p[1]
-#        
-#        fitness = 0
-#       
-#        ## Compute CI for non-singleton bags
-#        for b_idx in range(self.B):
-#            ci = self.compute_chi(Bags[b_idx], 1, measure)
-#            if(Labels[b_idx] == 0):  ## Negative bag, label = 0
-#                fitness = fitness - (np.mean(ci**(2*p1))**(1/p1))
-#            else: ## Positive bag, label=1
-#                fitness = fitness - (np.mean((ci-1)**(2*p2))**(1/p2))
-#    
-#            ## Sanity check
-#            if (np.isinf(fitness) or not(np.isreal(fitness)) or np.isnan(fitness)):
-#                fitness = np.real(fitness)
-#                fitness = -10000000
-#                
-#        return fitness
         
-    def evalFitness_softmax(self, Labels, measure, nPntsBags, oneV, bag_row_ids, diffM):
+    def evalFitness_minmax(self, Labels, measure, nPntsBags, oneV, bag_row_ids, diffM):
         """
         ===========================================================================
         % Evaluate the fitness of a measure using generalized mean model
@@ -654,18 +618,15 @@ class MIChoquetIntegral:
         ===========================================================================
         """
         
-        p1 = self.p[0]
-        p2 = self.p[1]
-        
         fitness = 0
        
         ## Compute CI for non-singleton bags
         for b_idx in range(self.B):
             ci = np.sum(np.multiply(diffM[b_idx],np.concatenate((measure[bag_row_ids[b_idx]], oneV[b_idx]),axis=1)),axis=1)
             if(Labels[b_idx] == 0):  ## Negative bag, label = 0
-                fitness = fitness - (np.mean(ci**(2*p1))**(1/p1))
+                fitness = fitness - (np.max(ci**(2)))
             else: ## Positive bag, label=1
-                fitness = fitness - (np.mean((ci-1)**(2*p2))**(1/p2))
+                fitness = fitness - (np.min((ci-1)**(2)))
     
             ## Sanity check
             if (np.isinf(fitness) or not(np.isreal(fitness)) or np.isnan(fitness)):
@@ -700,22 +661,53 @@ class MIChoquetIntegral:
         ===========================================================================
         """
         
+        ## Define indices of elements which can be changed 
         subsetInterval = self.evalInterval(childMeasure, lowerindex, upperindex)
         
-        ## Sample new value(s)
-        z = np.random.uniform(low=0,high=1)
-        if(z < Parameters.eta): ## Small-scale mutation: update only one element of the measure
-            iinterv = self.sampleMultinomial_mat(subsetInterval, 1, 'descend' ) ## Update the one interval according to multinomial
+        if (np.amax(subsetInterval) == 0):
+            childFitness = self.evalFitness_minmax(Labels, childMeasure, nPntsBags, oneV, bag_row_ids, diffM)
+            JumpType = 0
+            
+        elif (len(np.unique(childMeasure)) == 1):
+            
+            num_ind_to_sample = self.N
+            new_samp_ind = random.randint(0,num_ind_to_sample-1)
+            iinterv = childMeasure[new_samp_ind]
+            
             childMeasure = self.sampleMeasure(self.N, lowerindex, upperindex, childMeasure, iinterv, Parameters.sampleVar)
-            childFitness = self.evalFitness_softmax(Labels, childMeasure, nPntsBags, oneV, bag_row_ids, diffM)
+            childFitness = self.evalFitness_minmax(Labels, childMeasure, nPntsBags, oneV, bag_row_ids, diffM)
             JumpType = 1
-
-        else: ## Large-scale mutation: update all measure elements sort by valid interval widths in descending order
-            indx_subsetInterval = (-subsetInterval).argsort() ## sort the intervals in descending order
-      
-            for iinterv in range(len(indx_subsetInterval)): ## for all elements
-                childMeasure =  self.sampleMeasure(self.N, lowerindex, upperindex, childMeasure, iinterv, Parameters.sampleVar)
-                childFitness = self.evalFitness_softmax(Labels, childMeasure, nPntsBags, oneV, bag_row_ids, diffM)
+            
+        else:
+            ## Sample new value(s)
+            z = np.random.uniform(low=0,high=1)
+            if(z < Parameters.eta): ## Small-scale mutation: update only one element of the measure
+                
+                ind_to_sample = np.where(np.abs(subsetInterval) == 1)[0]
+                num_ind_to_sample = len(ind_to_sample)
+                
+                if (num_ind_to_sample) > 1:
+                    new_samp_ind = random.randint(0,num_ind_to_sample-1)
+                    iinterv = subsetInterval[ind_to_sample[new_samp_ind]]
+                else:
+                    
+                    try:
+                    
+                        new_samp_ind = ind_to_sample[0]
+                        iinterv = subsetInterval[new_samp_ind]
+                        
+                    except:
+                        print('Broken')
+                
+                childMeasure = self.sampleMeasure(self.N, lowerindex, upperindex, childMeasure, iinterv, Parameters.sampleVar)
+                childFitness = self.evalFitness_minmax(Labels, childMeasure, nPntsBags, oneV, bag_row_ids, diffM)
+                JumpType = 1
+    
+            else: ## Large-scale mutation: update all measure elements sort by valid interval widths in descending order
+                
+                ## Sample entirely new measure - continue sampling until new measure obtained
+                childMeasure =  self.sampleMeasure(self.N, lowerindex, upperindex)
+                childFitness = self.evalFitness_minmax(Labels, childMeasure, nPntsBags, oneV, bag_row_ids, diffM)
                 JumpType = 2
         
         return childMeasure, childFitness, JumpType
@@ -748,7 +740,7 @@ class MIChoquetIntegral:
     
         if (len(args) > 4):
             prevSample = args[3]
-            IndexsubsetToChange = args[4]
+            IndexsubsetToChange = int(args[4])
             sampleVar = args[5]
     
         if(len(args) < 4):
@@ -757,70 +749,38 @@ class MIChoquetIntegral:
             ## Flip a coin to decide whether to sample from above or sample from bottom
             ## Sample new measure, prior is uniform/no prior
             """
-            z = np.random.uniform(low=0,high=1)
-            if (z >= 0.5): ## sample from bottom-up
-                measure = self.sampleMeasure_Bottom(nSources,lowerindex)
-            else:   ## sample from top-down
-                measure = self.sampleMeasure_Above(nSources,upperindex)
+            measure = self.sampleMeasureBinary(nSources,lowerindex, upperindex)
+            
         else:
             ## Sample just one new element of measure
             
-            nElements = self.nElements
+#            nElements = self.nElements
             measure = prevSample
-            if ((IndexsubsetToChange<=nSources-1) and (IndexsubsetToChange>=0)): ## singleton
-                lowerBound = 0
-                upperBound = np.amin(measure[upperindex[IndexsubsetToChange]])
-            elif ((IndexsubsetToChange>=(nElements-nSources-1)) and (IndexsubsetToChange<=(nElements-2))): ## (nSources-1)-tuple
-                lowerBound = np.amax(measure[lowerindex[IndexsubsetToChange]])
-                upperBound = 1
-            else:  ## remaining elements
-                lowerBound = np.amax(measure[lowerindex[IndexsubsetToChange]]) 
-                upperBound = np.amin(measure[upperindex[IndexsubsetToChange]]) 
             
-            denom = upperBound - lowerBound
-            v_bar = sampleVar/((denom**2)+1e-5) ## -changed
-            x_bar = measure[IndexsubsetToChange] ## -changed
+            ## Flip the value of the measure
+            if (measure[IndexsubsetToChange] == 1.0):
+                measure[IndexsubsetToChange] = 0
+            else:
+                measure[IndexsubsetToChange] = 1.0
+                
+#            ## Update subsequent measure values in the lattice
+#            if ((IndexsubsetToChange<=nSources-1) and (IndexsubsetToChange>=0)): ## singleton
+#                lowerBound = 0
+#                upperBound = np.amin(measure[upperindex[IndexsubsetToChange]])
+#            elif ((IndexsubsetToChange>=(nElements-nSources-1)) and (IndexsubsetToChange<=(nElements-2))): ## (nSources-1)-tuple
+#                lowerBound = np.amax(measure[lowerindex[IndexsubsetToChange]])
+#                upperBound = 1
+#            else:  ## remaining elements
+#                lowerBound = np.amax(measure[lowerindex[IndexsubsetToChange]]) 
+#                upperBound = np.amin(measure[upperindex[IndexsubsetToChange]]) 
             
-            ## Sample from a Truncated Gaussian
-            sigma_bar = np.sqrt(v_bar)
-            c2 = np.random.uniform(low=0,high=1) ## Randomly generate a value between [0,1]
-            val = self.invcdf_TruncatedGaussian(c2,x_bar,sigma_bar,lowerBound,upperBound) ## New measure element value
-            measure[IndexsubsetToChange] = val  ## New measure element value
+           
     
         return measure
     
-    def sampleMeasure_Above(self, nSources, upperindex):
-        """
-        =======================================================================
-        %sampleMeasure_Above - sampling a new measure from "top-down"
-        % The order of sampling a brand new measure is to first sample (nSource-1)-tuples (e.g. g_1234 for 5-source),
-        % then (nSource-2)-tuples (e.g. g_123), and so on until singletons (g_1)
-        % Notice it will satisfy monotonicity!
-        %
-        % INPUT
-        %   nSources - number of sources
-        %   upperindex - list that stores all the corresponding supersets (upper index) of measure elements
-        %
-        % OUTPUT
-        %   measure - new measure after update
-        %
-        =======================================================================
-        """
-        
-        ## Sample new measure, prior is uniform/no prior
-        nElements = self.nElements  ## total length of measure
-        nSources = self.N ## Number of sources
-        measure = np.zeros(nElements)
-        measure[-1] = 1 ## mu_all
-        measure[nElements-2:nElements-nSources-2:-1] = np.random.uniform(low=0,high=1,size=nSources) ## mu_1234,1235,1245,1345,2345 for 5 sources, for example (second to last tier)
-        
-        for j in range(nElements-nSources-2,-1,-1):
-            upperBound = np.amin(measure[upperindex[j]]) ## upper bound
-            measure[j] = 0 + (upperBound - 0)*np.random.uniform(low=0,high=1)
-            
-        return measure
     
-    def sampleMeasure_Bottom(self,nSources,lowerindex):
+    
+    def sampleMeasureBinary(self,nSources,lowerindex,upperindex):
         """
         =======================================================================
         %sampleMeasure_Bottom - sampling a new measure from "bottom-up"
@@ -841,12 +801,19 @@ class MIChoquetIntegral:
         nElements = self.nElements  ## total length of measure
         nSources = self.N ## Number of sources
         measure = np.zeros(nElements)
-        measure[0:nSources] = np.random.uniform(low=0,high=1,size=nSources) ## sample singleton densities
+        measure[0:nSources] = np.random.binomial(n=1,p=0.5,size=nSources) ## sample singleton densities
         measure[-1] = 1 ## mu_all
         
         for j in range(nSources,(len(measure)-1)):
             lowerBound = np.amax(measure[lowerindex[j]]) ## lower bound     
-            measure[j] = lowerBound + (1-lowerBound)*np.random.uniform(low=0,high=1)
+            upperBound = np.amin(measure[upperindex[j]])
+            
+            if (lowerBound == 1.0) and (upperBound == 1.0):
+                measure[j] = 1.0
+            elif (lowerBound == 0) and (upperBound == 0):
+                measure[j] = 0
+            else:
+                measure[j] = np.random.binomial(n=1,p=0.5,size=1)
         
         return measure
     
@@ -986,62 +953,11 @@ class MIChoquetIntegral:
                     upperindex.append(tmp_ind) 
                 
                 else:
-                    upperindex.append([nElements])
+                    upperindex.append([nElements-1])
                 
         upperindex.append([-1])
         
         return lowerindex, upperindex
-
-    def invcdf_TruncatedGaussian(self,cdf,x_bar,sigma_bar,lowerBound,upperBound):
-        """
-        =======================================================================
-        %
-        % stats_TruncatedGaussian - stats for a truncated gaussian distribution
-        %
-        % INPUT
-        %   cdf: evaluated at the values at cdf
-        %   x_bar,sigma_bar,lowerBound,upperBound: suppose X~N(mu,sigma^2) has a normal distribution and lies within
-        %   the interval lowerBound<X<upperBound
-        %   *The size of cdfTG and pdfTG is the common size of X, MU and SIGMA.  A scalar input
-        %   functions as a constant matrix of the same size as the other inputs.
-        %
-        % OUTPUT
-        %   val: the x corresponding to the cdf TG value
-        %
-        =======================================================================
-        """
-    
-        term2 = (self.normcdf(upperBound,x_bar,sigma_bar) - self.normcdf(lowerBound,x_bar,sigma_bar))
-        const2 =  cdf*term2 + self.normcdf(lowerBound,x_bar,sigma_bar)
-        
-        const3 = (const2*2)-1
-        inner_temp = erfinv(const3)
-        val = inner_temp*np.sqrt(2)*sigma_bar + x_bar
-        
-        return val
-        
-        
-    def normcdf(self,x,mu,sigma):
-        """
-        =======================================================================
-        % Returns cdf value of x
-        %
-        % INPUT
-        %   x: the x to compute the cdf value
-        %   mu: mean of the Gaussian distribution
-        %   sigma: sigma of the Gaussian distribution
-        % OUTPUT
-        %
-        %   val: the x corresponding to the cdf value
-        % 
-        =======================================================================
-        """
-        
-        z = np.divide((x-mu),sigma)
-        p = 0.5 * erfc(np.divide(-z,np.sqrt(2)))
-        
-        return p
-
 
     def sampleMultinomial_mat(self, PDFdistr, NumSamples, MethodStr):
         """
@@ -1112,6 +1028,7 @@ class MIChoquetIntegral:
         outputIndex =  PDFdistr_sortIdx[Indxccc]
         
         return outputIndex
+
 
     def get_keys_index(self):
         """

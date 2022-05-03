@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Thu Jan 20 16:52:06 2022
+Created on Fri Apr 29 16:09:48 2022
 
 @author: cmccurley
 """
@@ -572,11 +572,11 @@ class MIChoquetIntegral:
 #                    Analysis['subsetIntervalnPop'][:,:,t] = subsetIntervalnPop  
             
             ## Update terminal 
-#            if(not(t % 10)):
-            print('\n')
-            print(f'Iteration: {str(t)}')
-            print(f'Best fitness: {mVal.round(6)}')
-            print(measure.round(4))
+            if(not(t % 10)):
+                print('\n')
+                print(f'Iteration: {str(t)}')
+                print(f'Best fitness: {mVal.round(6)}')
+                print(measure.round(4))
                 
             del fitnessPopNext
             del measurePopNext

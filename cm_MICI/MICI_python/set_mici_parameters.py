@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Mon Apr 18 17:59:22 2022
+Created on Fri Apr 29 16:15:34 2022
 
 @author: cmccurley
 """
@@ -70,16 +70,12 @@ def set_parameters(args):
     parser.add_argument('--sigma', help='Sigma of Gaussians in fitness function.', default=0.1, type=float)
     parser.add_argument('--maxIterations', help='Max number of iteration.', default=5000, type=int)
     parser.add_argument('--fitnessThresh', help='Stopping criteria: when fitness change is less than the threshold.', default=0.0001, type=float)
-    parser.add_argument('--eta', help='Percentage of time to make small-scale mutation.', default=0.5, type=float)
+    parser.add_argument('--eta', help='Percentage of time to make small-scale mutation.', default=0.8, type=float)
     parser.add_argument('--sampleVar', help='Variance around sample mean.', default=0.1, type=float)
     parser.add_argument('--mean', help='Mean of ci in fitness function. Is always set to 1 if the positive label is "1".', default=1.0, type=float)
     parser.add_argument('--analysis', action='store_true', help='If ="1", record all intermediate results.', default=False)
     parser.add_argument('--p', help='p power value for the softmax. p(1) should->Inf, p(2) should->-Inf.', nargs='+', default=[10,-10])
     parser.add_argument('--use_parallel', action='store_true', help='If ="1", use parallel processing for population sampling.', default=True)
-    
-    ## Parameters for binary fuzzy measure sampling
-    parser.add_argument('--U', help='How many times we are willing to sample a new measure before deeming the search exhaustive.', default=500, type=int)
-    parser.add_argument('--Q', help='How many times the best fitness value can remain unchanged before stopping.', default=100, type=int)
 
     return parser.parse_args(args)
 

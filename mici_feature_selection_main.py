@@ -75,7 +75,9 @@ import scipy.io as io
 
 ## Custom packages
 from mici_feature_selection_parameters import set_parameters as set_parameters
-from cm_MICI.util.cm_mi_choquet_integral import MIChoquetIntegral
+#from cm_MICI.util.cm_mi_choquet_integral import MIChoquetIntegral
+#from cm_MICI.util.cm_mi_choquet_integral_dask import MIChoquetIntegral
+from cm_MICI.util.cm_mi_choquet_integral_binary import BinaryMIChoquetIntegral
 
 torch.manual_seed(24)
 torch.set_num_threads(1)
@@ -560,10 +562,44 @@ if __name__== "__main__":
     ###########################################################################
     
     ## Initialize Choquet Integral instance
-    chi_genmean = MIChoquetIntegral()
+#    chi = MIChoquetIntegral()
+    chi = BinaryMIChoquetIntegral()
     
     # Training Stage: Learn measures given training bags and labels
-    chi_genmean.train_chi_softmax(Bags, Labels, parameters) ## generalized-mean model
+#    chi.train_chi_softmax(Bags, Labels, parameters) ## generalized-mean model
+    chi.train_chi(Bags, Labels, parameters)
+    
+    ###########################################################################
+    ######################### Extract Leared Measure ##########################
+    ###########################################################################
+    
+    fm = chi.fm
+    
+    fm_savepath = img_savepath + '/fm'
+    np.save(fm_savepath, fm)
+    
+    fm_file = fm_savepath + '.txt'
+    ## Save parameters         
+    with open(fm_file, 'w') as f:
+        json.dump(fm, f, indent=2)
+        f.close 
+            
+    ###########################################################################
+    ############################ Print Equations ##############################
+    ###########################################################################
+
+#    eqt_dict = chi.get_linear_eqts()
+#        
+#    ## Save equations
+#    savename = img_savepath + '/chi_equations.txt'
+#    with open(savename, 'w') as f:
+#        json.dump(eqt_dict, f, indent=2)
+#    f.close 
+    
+    ###########################################################################
+    ############################### Test MICI #################################
+    ###########################################################################
+    
     
 #    ## Only use first stage
 #    dask_all_activations_p = dask_all_activations_p[0:64,:]
@@ -894,10 +930,10 @@ if __name__== "__main__":
 #            
 #            labels_p = gt_img_p.reshape((gt_img_p.shape[0]*gt_img_p.shape[1]))
 #            
-#            chi = ChoquetIntegral()    
-#    
-#            # train the chi via quadratic program 
-#            chi.train_chi(data_p, labels_p)
+##            chi = ChoquetIntegral()    
+##    
+##            # train the chi via quadratic program 
+##            chi.train_chi(data_p, labels_p)
 #        
 #            sample_idx+=1
 #    
@@ -908,52 +944,54 @@ if __name__== "__main__":
 #        
 #            all_sorts = chi.all_sorts
 #    
-#            if (NUM_SOURCES < 7):
-#            
-#                for idx in range(data_p.shape[1]):
-#                    data_out_p[idx], data_out_sort_labels_p[idx] = chi.chi_by_sort(data_p[:,idx])         
-#                
-#                ## Define custom colormap
-#                custom_cmap = plt.cm.get_cmap('jet', len(all_sorts))
-#                norm = matplotlib.colors.Normalize(vmin=1,vmax=len(all_sorts))
-#                
-#                ## Plot frequency histogram of sorts for single image
-#                sort_tick_labels = []
-#                for element in all_sorts:
-#                    sort_tick_labels.append(str(element))
-#                hist_bins = list(np.arange(0,len(all_sorts)+1)+0.5)
-#                plt.figure(figsize=[10,8])
-#                ax = plt.axes()
-#                plt.xlabel('Sorts', fontsize=14)
-#                plt.ylabel('Count', fontsize=14)
-#                n, bins, patches = plt.hist(data_out_sort_labels_p, bins=hist_bins, align='mid')
-#                plt.xlim([0.5,len(all_sorts)+0.5])
-#                ax.set_xticks(list(np.arange(1,len(all_sorts)+1)))
-#                ax.set_xticklabels(sort_tick_labels,rotation=45,ha='right')
-#                for idx, current_patch in enumerate(patches):
-#                    current_patch.set_facecolor(custom_cmap(norm(idx+1)))
-#                title = 'Histogram of Sorts'
-#                plt.title(title, fontsize=18)
-#                savename = pos_savepath + '/hist_of_sorts_pos.png'
-#                plt.savefig(savename)
-#                plt.close()
-#                
-#                ## Plot image colored by sort
-#                data_out_sort_labels_p = data_out_sort_labels_p.reshape((activation_set_p.shape[1],all_activations_p.shape[2]))
-#                plt.figure(figsize=[10,8])
-#                plt.imshow(data_out_sort_labels_p,cmap=custom_cmap)
-#                plt.axis('off')
-#                plt.colorbar()
-#                title = 'Image by Sorts'
-#                plt.title(title)
-#                savename = pos_savepath + '/img_by_sorts_pos.png'
-#                plt.savefig(savename)
-#                plt.close()
+##            if (NUM_SOURCES < 7):
+##            
+##                for idx in range(data_p.shape[1]):
+##                    data_out_p[idx], data_out_sort_labels_p[idx] = chi.chi_by_sort(data_p[:,idx])         
+##                
+##                ## Define custom colormap
+##                custom_cmap = plt.cm.get_cmap('jet', len(all_sorts))
+##                norm = matplotlib.colors.Normalize(vmin=1,vmax=len(all_sorts))
+##                
+##                ## Plot frequency histogram of sorts for single image
+##                sort_tick_labels = []
+##                for element in all_sorts:
+##                    sort_tick_labels.append(str(element))
+##                hist_bins = list(np.arange(0,len(all_sorts)+1)+0.5)
+##                plt.figure(figsize=[10,8])
+##                ax = plt.axes()
+##                plt.xlabel('Sorts', fontsize=14)
+##                plt.ylabel('Count', fontsize=14)
+##                n, bins, patches = plt.hist(data_out_sort_labels_p, bins=hist_bins, align='mid')
+##                plt.xlim([0.5,len(all_sorts)+0.5])
+##                ax.set_xticks(list(np.arange(1,len(all_sorts)+1)))
+##                ax.set_xticklabels(sort_tick_labels,rotation=45,ha='right')
+##                for idx, current_patch in enumerate(patches):
+##                    current_patch.set_facecolor(custom_cmap(norm(idx+1)))
+##                title = 'Histogram of Sorts'
+##                plt.title(title, fontsize=18)
+##                savename = pos_savepath + '/hist_of_sorts_pos.png'
+##                plt.savefig(savename)
+##                plt.close()
+##                
+##                ## Plot image colored by sort
+##                data_out_sort_labels_p = data_out_sort_labels_p.reshape((activation_set_p.shape[1],all_activations_p.shape[2]))
+##                plt.figure(figsize=[10,8])
+##                plt.imshow(data_out_sort_labels_p,cmap=custom_cmap)
+##                plt.axis('off')
+##                plt.colorbar()
+##                title = 'Image by Sorts'
+##                plt.title(title)
+##                savename = pos_savepath + '/img_by_sorts_pos.png'
+##                plt.savefig(savename)
+##                plt.close()
 #                    
-#            else:
-#                for idx in range(data_p.shape[1]):
-#                    data_out_p[idx] = chi.chi_quad(data_p[:,idx])
+##            else:
+##                for idx in range(data_p.shape[1]):
+##                    data_out_p[idx] = chi.chi_quad(data_p[:,idx])
 #                
+#            data_out_p = chi.compute_chi(data_p.T,1,chi.measure)
+#            
 #            ## Normalize ChI output
 #            data_out_p = data_out_p - np.min(data_out_p)
 #            data_out_p = data_out_p / (1e-7 + np.max(data_out_p))
@@ -1142,152 +1180,153 @@ if __name__== "__main__":
 #                pos_savepath =  img_savepath + '/negative_sample_' + str(sample_idx)
 #                os.mkdir(pos_savepath)
 #            except:
-#                pos_savepath =  img_savepath + '/negative_sample_' + str(sample_idx)
+#                pos_savepath =  img_savepath + '/negative_' + str(sample_idx)
+#        
+#            activation_set_p = all_activations_p[indices,:,:]
+#            data_p = activations[indices,:]
+#            
+#            labels_p = gt_img_p.reshape((gt_img_p.shape[0]*gt_img_p.shape[1]))
+#            
+##            chi = ChoquetIntegral()    
+##    
+##            # train the chi via quadratic program 
+##            chi.train_chi(data_p, labels_p)
+#        
+#            sample_idx+=1
+#    
+#            ## Compute ChI at every pixel location
+#            data_out_p = np.zeros((data_p.shape[1]))
+#            data_out_sorts_p = []
+#            data_out_sort_labels_p = np.zeros((data_p.shape[1]))   
+#        
+#            all_sorts = chi.all_sorts
+#    
+##            if (NUM_SOURCES < 7):
+##            
+##                for idx in range(data_p.shape[1]):
+##                    data_out_p[idx], data_out_sort_labels_p[idx] = chi.chi_by_sort(data_p[:,idx])         
+##                
+##                ## Define custom colormap
+##                custom_cmap = plt.cm.get_cmap('jet', len(all_sorts))
+##                norm = matplotlib.colors.Normalize(vmin=1,vmax=len(all_sorts))
+##                
+##                ## Plot frequency histogram of sorts for single image
+##                sort_tick_labels = []
+##                for element in all_sorts:
+##                    sort_tick_labels.append(str(element))
+##                hist_bins = list(np.arange(0,len(all_sorts)+1)+0.5)
+##                plt.figure(figsize=[10,8])
+##                ax = plt.axes()
+##                plt.xlabel('Sorts', fontsize=14)
+##                plt.ylabel('Count', fontsize=14)
+##                n, bins, patches = plt.hist(data_out_sort_labels_p, bins=hist_bins, align='mid')
+##                plt.xlim([0.5,len(all_sorts)+0.5])
+##                ax.set_xticks(list(np.arange(1,len(all_sorts)+1)))
+##                ax.set_xticklabels(sort_tick_labels,rotation=45,ha='right')
+##                for idx, current_patch in enumerate(patches):
+##                    current_patch.set_facecolor(custom_cmap(norm(idx+1)))
+##                title = 'Histogram of Sorts'
+##                plt.title(title, fontsize=18)
+##                savename = pos_savepath + '/hist_of_sorts_pos.png'
+##                plt.savefig(savename)
+##                plt.close()
+##                
+##                ## Plot image colored by sort
+##                data_out_sort_labels_p = data_out_sort_labels_p.reshape((activation_set_p.shape[1],all_activations_p.shape[2]))
+##                plt.figure(figsize=[10,8])
+##                plt.imshow(data_out_sort_labels_p,cmap=custom_cmap)
+##                plt.axis('off')
+##                plt.colorbar()
+##                title = 'Image by Sorts'
+##                plt.title(title)
+##                savename = pos_savepath + '/img_by_sorts_pos.png'
+##                plt.savefig(savename)
+##                plt.close()
+#                    
+##            else:
+##                for idx in range(data_p.shape[1]):
+##                    data_out_p[idx] = chi.chi_quad(data_p[:,idx])
 #                
+#            data_out_p = chi.compute_chi(data_p.T,1,chi.measure)
 #            
-#        activation_set_p = all_activations_p[indices,:,:]
-#        data_p = activations[indices,:]
-#        
-#        labels_p = gt_img_p.reshape((gt_img_p.shape[0]*gt_img_p.shape[1]))
-#        
-##        chi = ChoquetIntegral()    
-#
-#        # train the chi via quadratic program 
-##        chi.train_chi(data_p, labels_p)
+#            ## Normalize ChI output
+#            data_out_p = data_out_p - np.min(data_out_p)
+#            data_out_p = data_out_p / (1e-7 + np.max(data_out_p))
 #    
-#        sample_idx+=1
-#
-#        ## Compute ChI at every pixel location
-#        data_out_p = np.zeros((data_p.shape[1]))
-#        data_out_sorts_p = []
-#        data_out_sort_labels_p = np.zeros((data_p.shape[1]))   
-#    
-#        all_sorts = chi.all_sorts
-#
-#        if (NUM_SOURCES < 7):
+#            ###########################################################################
+#            ############################## Compute IoU ################################
+#            ###########################################################################
+#            ## Binarize feature
+#            
+#            gt_img_p = gt_img_p > 0
+#            
+#            try:
+#                img_thresh_p = threshold_otsu(data_out_p)
+#                binary_feature_map_p = data_out_p.reshape((activation_set_p.shape[1],activation_set_p.shape[2])) > img_thresh_p
+#            except:
+#                binary_feature_map_p = data_out_p < 0.1
 #        
-#            for idx in range(data_p.shape[1]):
-#                data_out_p[idx], data_out_sort_labels_p[idx] = chi.chi_by_sort(data_p[:,idx])         
+#            ## Compute fitness as IoU to pseudo-groundtruth
+#            intersection = np.logical_and(binary_feature_map_p, gt_img_p)
+#            union = np.logical_or(binary_feature_map_p, gt_img_p)
 #            
-#            ## Define custom colormap
-#            custom_cmap = plt.cm.get_cmap('jet', len(all_sorts))
-#            norm = matplotlib.colors.Normalize(vmin=1,vmax=len(all_sorts))
+#            try:
+#                iou_score_p = np.sum(intersection) / np.sum(union)
+#            except:
+#                iou_score_p = 0
+#         
+#            ###########################################################################
+#            ######################### Positive Visualizations #########################
+#            ###########################################################################
+#            activation_set_p = all_activations_p[indices,:,:]
 #            
-#            ## Plot frequency histogram of sorts for single image
-#            sort_tick_labels = []
-#            for element in all_sorts:
-#                sort_tick_labels.append(str(element))
-#            hist_bins = list(np.arange(0,len(all_sorts)+1)+0.5)
-#            plt.figure(figsize=[10,8])
-#            ax = plt.axes()
-#            plt.xlabel('Sorts', fontsize=14)
-#            plt.ylabel('Count', fontsize=14)
-#            n, bins, patches = plt.hist(data_out_sort_labels_p, bins=hist_bins, align='mid')
-#            plt.xlim([0.5,len(all_sorts)+0.5])
-#            ax.set_xticks(list(np.arange(1,len(all_sorts)+1)))
-#            ax.set_xticklabels(sort_tick_labels,rotation=45,ha='right')
-#            for idx, current_patch in enumerate(patches):
-#                current_patch.set_facecolor(custom_cmap(norm(idx+1)))
-#            title = 'Histogram of Sorts'
-#            plt.title(title, fontsize=18)
-#            savename = pos_savepath + '/hist_of_sorts_pos.png'
-#            plt.savefig(savename)
-#            plt.close()
-#            
-#            ## Plot image colored by sort
-#            data_out_sort_labels_p = data_out_sort_labels_p.reshape((activation_set_p.shape[1],all_activations_p.shape[2]))
-#            plt.figure(figsize=[10,8])
-#            plt.imshow(data_out_sort_labels_p,cmap=custom_cmap)
+#            for k in range(activation_set_p.shape[0]):
+#                plt.figure()
+#                plt.imshow(activation_set_p[k,:,:])
+#                plt.axis('off')
+#                title = 'Source idx: ' + str(k+1)
+#                plt.title(title)
+#                
+#                savename = pos_savepath + '/source_idx_' + str(k+1) + '_neg.png'
+#                plt.savefig(savename)
+#                plt.close()
+#        
+#            data_out_p = data_out_p.reshape((activation_set_p.shape[1],activation_set_p.shape[2]))
+#            plt.figure()
+#            plt.imshow(data_out_p)
 #            plt.axis('off')
 #            plt.colorbar()
-#            title = 'Image by Sorts'
+#            
+#            title = 'Raw FusionCAM; IoU: ' + str(iou_score_p)
 #            plt.title(title)
-#            savename = pos_savepath + '/img_by_sorts_pos.png'
+#            
+#            savename = pos_savepath + '/raw_fusioncam_neg.png'
+#                
 #            plt.savefig(savename)
 #            plt.close()
-#                
-#        else:
-#            for idx in range(data_p.shape[1]):
-#                data_out_p[idx] = chi.chi_quad(data_p[:,idx])
+#        
+#            images_p = images_p.permute(2,3,1,0)
+#            images_p = images_p.detach().cpu().numpy()
+#            image_p = images_p[:,:,:,0]
+#        
+#            cam_image = show_cam_on_image(image_p, data_out_p, True)
 #            
-#        ## Normalize ChI output
-#        data_out_p = data_out_p - np.min(data_out_p)
-#        data_out_p = data_out_p / (1e-7 + np.max(data_out_p))
-#
-#        ###########################################################################
-#        ############################## Compute IoU ################################
-#        ###########################################################################
-#        ## Binarize feature
-#        
-#        gt_img_p = gt_img_p > 0
-#        
-#        try:
-#            img_thresh_p = threshold_otsu(data_out_p)
-#            binary_feature_map_p = data_out_p.reshape((activation_set_p.shape[1],activation_set_p.shape[2])) > img_thresh_p
-#        except:
-#            binary_feature_map_p = data_out_p < 0.1
-#    
-#        ## Compute fitness as IoU to pseudo-groundtruth
-#        intersection = np.logical_and(binary_feature_map_p, gt_img_p)
-#        union = np.logical_or(binary_feature_map_p, gt_img_p)
-#        
-#        try:
-#            iou_score_p = np.sum(intersection) / np.sum(union)
-#        except:
-#            iou_score_p = 0
-#     
-#        ###########################################################################
-#        ######################### Positive Visualizations #########################
-#        ###########################################################################
-#        activation_set_p = all_activations_p[indices,:,:]
-#        
-#        for k in range(activation_set_p.shape[0]):
 #            plt.figure()
-#            plt.imshow(activation_set_p[k,:,:])
-#            plt.axis('off')
-#            title = 'Source idx: ' + str(k+1)
+#            plt.imshow(cam_image, cmap='jet')
+#          
+#            title = 'FusionCAM; IoU: ' + str(iou_score_p)
 #            plt.title(title)
+#            plt.axis('off')
 #            
-#            savename = pos_savepath + '/source_idx_' + str(k+1) + '_pos.png'
+#            savename = pos_savepath + '/fusioncam_neg.png'
+#                
 #            plt.savefig(savename)
 #            plt.close()
-#    
-#        data_out_p = data_out_p.reshape((activation_set_p.shape[1],activation_set_p.shape[2]))
-#        plt.figure()
-#        plt.imshow(data_out_p)
-#        plt.axis('off')
-#        plt.colorbar()
-#        
-#        title = 'Raw FusionCAM; IoU: ' + str(iou_score_p)
-#        plt.title(title)
-#        
-#        savename = pos_savepath + '/raw_fusioncam_pos.png'
 #            
-#        plt.savefig(savename)
-#        plt.close()
-#    
-#        images_p = images_p.permute(2,3,1,0)
-#        images_p = images_p.detach().cpu().numpy()
-#        image_p = images_p[:,:,:,0]
-#    
-#        cam_image = show_cam_on_image(image_p, data_out_p, True)
-#        
-#        plt.figure()
-#        plt.imshow(cam_image, cmap='jet')
-#      
-#        title = 'FusionCAM; IoU: ' + str(iou_score_p)
-#        plt.title(title)
-#        plt.axis('off')
-#        
-#        savename = pos_savepath + '/fusioncam_pos.png'
-#            
-#        plt.savefig(savename)
-#        plt.close()
-#        
-#        if sample_idx > 20:
-#            break        
+#            if sample_idx > 20:
+#                break
 #                
-#                
+                
                 
             
     

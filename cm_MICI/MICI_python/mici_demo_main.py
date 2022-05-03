@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Sat Apr 16 08:05:14 2022
+Created on Fri Apr 29 16:37:28 2022
 
 @author: cmccurley
-."""
-
+"""
 
 """
 ***********************************************************************
@@ -51,9 +50,8 @@ import matplotlib.pyplot as plt
 import scipy.io as io
 
 ## Custom packages
-from cm_MICI.learnCIMeasureParams import set_parameters
-#from cm_MICI.util.cm_mi_choquet_integral import MIChoquetIntegral
-from cm_MICI.util.cm_mi_choquet_integral_binary import BinaryMIChoquetIntegral
+from set_mici_parameters import set_parameters
+from mi_choquet_integral import MIChoquetIntegral
 
 """
 %=====================================================================
@@ -76,7 +74,7 @@ if __name__== "__main__":
     ######################################################################
     
     ## Load the demo data
-    data = io.loadmat('./cm_MICI/demo_data_cl.mat')
+    data = io.loadmat('./demo_data_cl.mat')
     Bags = data['Bags'][0,:]
     Labels = data['Labels'][0,:]
     gtrue = data['gtrue'][0,:]
@@ -87,24 +85,18 @@ if __name__== "__main__":
     ######################################################################
     
     ## Initialize Choquet Integral instance
-#    chi_genmean = MIChoquetIntegral()
-    chi_binary = BinaryMIChoquetIntegral() ## Min-max objective with binary fuzzy measure
+    chi_genmean = MIChoquetIntegral()
     
     # Training Stage: Learn measures given training bags and labels
-#    chi_genmean.train_chi_softmax(Bags, Labels, Parameters) ## generalized-mean model
-    
-    chi_binary.train_chi(Bags, Labels, Parameters) 
+    chi_genmean.train_chi_softmax(Bags, Labels, Parameters) ## generalized-mean model
     
     ######################################################################
     ########################## Testing Stage #############################
     ######################################################################
     
     ## Testing Stage: Given the learned measures above, compute fusion results
-#    Ytrue = chi_genmean.compute_chi(Bags,len(Bags),gtrue)  ## True measure
-#    Yestimate_genmean = chi_genmean.compute_chi(Bags,len(Bags),chi_genmean.measure)  ## Learned measure by MICI generalized-mean model
-    
-    Ytrue = chi_binary.compute_chi(Bags,len(Bags),gtrue)  ## True measure
-    Yestimate_genmean = chi_binary.compute_chi(Bags,len(Bags),chi_binary.measure) 
+    Ytrue = chi_genmean.compute_chi(Bags,len(Bags),gtrue)  ## True measure
+    Yestimate_genmean = chi_genmean.compute_chi(Bags,len(Bags),chi_genmean.measure)  ## Learned measure by MICI generalized-mean model
 
     ######################################################################
     ############################## Plots #################################

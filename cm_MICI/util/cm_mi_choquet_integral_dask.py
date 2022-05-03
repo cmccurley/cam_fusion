@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
+Created on Mon May  2 12:48:40 2022
+
+@author: cmccurley
+"""
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
 Created on Thu Jan 20 16:52:06 2022
 
 @author: cmccurley
@@ -186,9 +194,9 @@ class MIChoquetIntegral:
         for i in range(nBags):
             
             if (nBags == 1):
-                bag = deepcopy(Bag)
+                bag = deepcopy(Bag.compute())
             else:
-                bag = deepcopy(Bag[i])
+                bag = deepcopy(Bag[i].compute())
                 
             if not(i):
                 tmp = np.zeros((nBags,bag.shape[1]-1),dtype=np.object)
@@ -364,7 +372,7 @@ class MIChoquetIntegral:
         diffM = []
         for i in range(nBags):
             
-            bag = Bags[i]
+            bag = Bags[i].compute()
                 
             if not(i):
                 tmp = np.zeros((nBags,bag.shape[1]-1),dtype=np.object)
