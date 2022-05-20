@@ -110,11 +110,18 @@ if __name__== "__main__":
     ############################## Plots #################################
     ######################################################################
 
+#    ## Plot true and estimated labels
+#    fig, ax = plt.subplots(1,2)
+#    ax[0].scatter(X[:,0],X[:,1],c=Ytrue)
+#    ax[0].set_title('True Labels')
+#    ax[1].scatter(X[:,0],X[:,1],c=Yestimate_genmean)
+#    ax[1].set_title('Fusion result: MICI generalized-mean')
+    
     ## Plot true and estimated labels
     fig, ax = plt.subplots(1,2)
     ax[0].scatter(X[:,0],X[:,1],c=Ytrue)
     ax[0].set_title('True Labels')
     ax[1].scatter(X[:,0],X[:,1],c=Yestimate_genmean)
-    ax[1].set_title('Fusion result: MICI generalized-mean')
+    ax[1].set_title('Fusion result: MICI min-max')
     
     

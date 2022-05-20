@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Wed Feb 16 09:51:05 2022
+Created on Thu May 12 12:20:39 2022
 
 @author: cmccurley
 """
@@ -49,6 +49,7 @@ libgcc_s = ctypes.CDLL('libgcc_s.so.1')
 import matplotlib.pyplot as plt
 import matplotlib.colors
 from skimage.filters import threshold_otsu
+from skimage.segmentation import slic
 
 import dask.array as da
 
@@ -74,7 +75,7 @@ from cam_functions import ActivationCAM, OutputScoreCAM
 #import scipy.io as io
 
 ## Custom packages
-from mici_feature_selection_parameters import set_parameters as set_parameters
+#from mici_feature_selection_parameters import set_parameters as set_parameters
 #from cm_MICI.util.cm_mi_choquet_integral import MIChoquetIntegral
 from cm_MICI.util.cm_mi_choquet_integral_dask import MIChoquetIntegral
 #from cm_MICI.util.cm_mi_choquet_integral_binary_dask import BinaryMIChoquetIntegral
@@ -83,6 +84,101 @@ import mil_source_selection
 torch.manual_seed(24)
 torch.set_num_threads(1)
 
+
+import argparse
+
+#######################################################################
+########################## Define Parameters ##########################
+#######################################################################
+def set_parameters(args):
+    """
+    ******************************************************************
+        *
+        *  Func:    set_parameters()
+        *
+        *  Desc:    Class definition for the configuration object.  
+        *           This object defines that parameters for the MIL U-Net
+        *           script.
+        *
+    ******************************************************************
+    """  
+    
+    ######################################################################
+    ############################ Define Parser ###########################
+    ######################################################################
+    
+    parser = argparse.ArgumentParser(description='Training script for bag-level classifier.')
+    
+    parser.add_argument('--run_mode', help='Mode to train, test, or compute CAMS. (cam)', default='test', type=str)
+    
+    ######################################################################
+    ######################### Input Parameters ###########################
+    ######################################################################
+    
+    parser.add_argument('--DATASET', help='Dataset selection.', default='mnist', type=str)
+    parser.add_argument('--DATABASENAME', help='Relative path to the training data list.', default='', type=str)
+ 
+    parser.add_argument('--target_classes', help='List of target classes.', nargs='+', default=['aeroplane'])
+    parser.add_argument('--bg_classes', help='List of background classes.', nargs='+', default=['cat'])
+    parser.add_argument('--layers', help='Layers to compute CAM at.', nargs='+', default=[4,9,16,23,30])
+#    parser.add_argument('--CAM_SEG_THRESH', help='Hard threshold to convert CAM to segmentation decision.', nargs='+', default=[0.001, 0.01, 0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.8, 0.9])
+    
+    ######################################################################
+    ##################### Training Hyper-parameters ######################
+    ######################################################################
+    
+    ## Starting parameters
+#    parser.add_argument('--starting_parameters', help='Initial parameters when training from scratch. (0 uses pre-training on ImageNet.)', default='0', type=str)
+    parser.add_argument('--starting_parameters', help='Initial parameters when training from scratch. (0 uses pre-training on ImageNet.)', default='/model_eoe_80.pth', type=str)
+    parser.add_argument('--model', help='Neural network model', default='vgg16', type=str)
+    
+#    ## Hyperparameters
+#    parser.add_argument('--NUM_CLASSES', help='Number of classes in the data set.', default=2, type=int)
+    parser.add_argument('--BATCH_SIZE', help='Input batch size for training.', default=1, type=int)
+#    parser.add_argument('--EPOCHS', help='Number of epochs to train.', default=100, type=int)
+#    parser.add_argument('--LR', help='Learning rate.', default=0.001, type=float)
+#    
+#    ## Updating  
+#    parser.add_argument('--update_on_epoch', help='Number of epochs to update loss script.', default=5, type=int)
+    parser.add_argument('--parameter_path', help='Where to save/load weights after each epoch of training', default='/trainTemp.pth', type=str)
+#    
+    ## PyTorch/GPU parameters
+    parser.add_argument('--no-cuda', action='store_true', help='Disables CUDA training.', default=False)
+    parser.add_argument('--cuda', help='Enable CUDA training.', default=True)
+    
+    ######################################################################
+    ######################### Output Parameters ##########################
+    ######################################################################
+    
+    ## Output parameters
+    parser.add_argument('--loss_file', help='Where to save training and validation loss updates.', default='/loss.txt', type=str)
+    parser.add_argument('--outf', help='Where to save output files.', default='./mnist/vgg16/output', type=str)
+    parser.add_argument('--NUMWORKERS', help='', default=0, type=int)
+    
+    
+    parser.add_argument('--TMPDATAPATH', help='', default='', type=str)
+    
+    ######################################################################
+    ########################## MICI Parameters ###########################
+    ######################################################################
+    
+    ## MICI parameters
+    parser.add_argument('--nPop', help='Size of population, preferably even numbers.', default=100, type=int)
+    parser.add_argument('--sigma', help='Sigma of Gaussians in fitness function.', default=0.1, type=float)
+    parser.add_argument('--maxIterations', help='Max number of iteration.', default=500, type=int)
+    parser.add_argument('--fitnessThresh', help='Stopping criteria: when fitness change is less than the threshold.', default=0.0001, type=float)
+    parser.add_argument('--eta', help='Percentage of time to make small-scale mutation.', default=0.5, type=float)
+    parser.add_argument('--sampleVar', help='Variance around sample mean.', default=0.1, type=float)
+    parser.add_argument('--mean', help='Mean of ci in fitness function. Is always set to 1 if the positive label is "1".', default=1.0, type=float)
+    parser.add_argument('--analysis', action='store_true', help='If ="1", record all intermediate results.', default=False)
+    parser.add_argument('--p', help='p power value for the softmax. p(1) should->Inf, p(2) should->-Inf.', nargs='+', default=[10,-10])
+    parser.add_argument('--use_parallel', action='store_true', help='If ="1", use parallel processing for population sampling.', default=True)
+    
+    ## Parameters for binary fuzzy measure sampling
+    parser.add_argument('--U', help='How many times we are willing to sample a new measure before deeming the search exhaustive.', default=500, type=int)
+    parser.add_argument('--Q', help='How many times the best fitness value can remain unchanged before stopping.', default=2, type=int)
+    
+    return parser.parse_args(args)
 
 """
 %=====================================================================
@@ -235,20 +331,16 @@ if __name__== "__main__":
         test_loader = torch.utils.data.DataLoader(testset, batch_size=parameters.BATCH_SIZE, shuffle=True, pin_memory=False)
         valid_loader = torch.utils.data.DataLoader(validset, batch_size=parameters.BATCH_SIZE, shuffle=True, pin_memory=False) 
         
-        parameters.mnist_target_class = 7
-        parameters.mnist_background_class = 1
+        parameters.mnist_target_class = 8
+        parameters.mnist_background_class = 3
         
-        target_class = 7
-        background_class = 1
+        target_class = 8
+        background_class = 3
         
         nPBagsTrain = 2
         nNBagsTrain = 2
-        nPBagsTest = 2
-        nNBagsTest = 2
-        
-#        initial_ind = [56,20,54,28,1079,31,60,61,21,111,19,1166]
-#        initial_ind = [56,20,54,28,1079,31]
-        initial_ind = [20,40,56,417,608,609,663,911]
+        nPBagsTest = 20
+        nNBagsTest = 20
 
     ## Define files to save epoch training/validation
     logfilename = parameters.outf + parameters.loss_file
@@ -298,9 +390,10 @@ if __name__== "__main__":
 ###############################################################################
 ###############################################################################
     
-    experiment_savepath = parameters.outf.replace('output','mici_binary_measure')
-    new_save_path =  '/mici_genmean_7_versus_1_globally_picked_features'
+    experiment_savepath = parameters.outf.replace('output','superpixel_masks')
+    new_save_path =  '/mici_genmean_7_versus_1'
     parameters.feature_class = 'target'
+    INCLUDE_INVERTED = False
     
     Bags = []
     Labels = []
@@ -332,6 +425,13 @@ if __name__== "__main__":
             images, labels, gt_images = data[0].to(device), data[1].to(device), data[2]
             
         if (int(labels.detach().cpu().numpy())==parameters.mnist_target_class):
+    
+#            if (parameters.feature_class == 'background'):
+#                category = 0
+#            elif (parameters.feature_class == 'target'):
+#                category = 1
+#            elif (parameters.feature_class == 'mnist_class'):
+#                category = parameters.mnist_target_class
             
             ############# Convert groundtruth image into mask #############
             if (parameters.DATASET == 'mnist'):
@@ -392,11 +492,9 @@ if __name__== "__main__":
             
             ########### Exctract out the stage we're interested in and invert if desired #########
 #            all_activations = all_activations[0:64,:,:]
-#            all_activations = all_activations[scores_by_stage['1']['sorted_idx'][0:10],:,:]
+            all_activations = all_activations[scores_by_stage['1']['sorted_idx'][0:10],:,:]
             
-            all_activations = all_activations[initial_ind,:,:]
-            
-            if parameters.INCLUDE_INVERTED:
+            if INCLUDE_INVERTED:
                 # Flip activations
                 flipped_activations = all_activations
            
@@ -443,6 +541,13 @@ if __name__== "__main__":
             images, labels, gt_images = data[0].to(device), data[1].to(device), data[2]
             
         if (int(labels.detach().cpu().numpy())==parameters.mnist_background_class):
+    
+#            if (parameters.feature_class == 'background'):
+#                category = 0
+#            elif (parameters.feature_class == 'target'):
+#                category = 1
+#            elif (parameters.feature_class == 'mnist_class'):
+#                category = parameters.mnist_target_class
             
             ############# Convert groundtruth image into mask #############
             if (parameters.DATASET == 'mnist'):
@@ -503,11 +608,9 @@ if __name__== "__main__":
             
             ########### Exctract out the stage we're interested in and invert if desired #########
 #            all_activations = all_activations[0:64,:,:]
-#            all_activations = all_activations[scores_by_stage['1']['sorted_idx'][0:10],:,:]
+            all_activations = all_activations[scores_by_stage['1']['sorted_idx'][0:10],:,:]
             
-            all_activations = all_activations[initial_ind,:,:]
-            
-            if parameters.INCLUDE_INVERTED:
+            if INCLUDE_INVERTED:
                 # Flip activations
                 flipped_activations = all_activations
            
@@ -555,8 +658,8 @@ if __name__== "__main__":
         ############################ Select Sources ###############################
         ###########################################################################
         
-        for SOURCES in [parameters.NUM_SOURCES]:
-            new_save_path =  new_directory + '/mici_min_max_binary_measure_global_' + str(SOURCES) + parameters.experiment_name
+        for SOURCES in [4]:
+            new_save_path =  new_directory + '/mici_min_max_binary_measure_stage_1_' + str(SOURCES) + '_sources'
             
             parameters.feature_class = 'target'
             
@@ -603,32 +706,20 @@ if __name__== "__main__":
         chi.train_chi_softmax(tempBags, Labels, parameters) ## generalized-mean model
         
         ###########################################################################
-        ######################### Save Experiment Results #########################
+        ######################## Extract Learned Measure ##########################
         ###########################################################################
-        results_path = img_savepath + '/results.npy'
-        results = np.load(results_path, allow_pickle=True).item()
-        results['full_measure'] = chi.measure.tolist()
-        np.save(results_path, results, allow_pickle=True)
-        
-        results_savepath_text = img_savepath + '/results.txt'
-        with open(results_savepath_text, 'w') as f:
-            json.dump(results, f, indent=2)
-        f.close   
-        
-        ## Save measure values
-        measure = chi.measure
-        saveto = img_savepath + '/full_measure.npy'
-        np.save(saveto, measure)
         
         fm = chi.fm
+        
         fm_savepath = img_savepath + '/fm'
         np.save(fm_savepath, fm)
+        
         fm_file = fm_savepath + '.txt'
         ## Save parameters         
         with open(fm_file, 'w') as f:
             json.dump(fm, f, indent=2)
             f.close 
-#                
+                
 #        ##########################################################################
 #        ########################### Print Equations ##############################
 #        ##########################################################################
@@ -646,16 +737,15 @@ if __name__== "__main__":
         ############################### Test MICI #################################
         ###########################################################################
         
-        new_save_path =  new_directory + '/mici_min_max_binary_measure_global_' + str(parameters.NUM_SOURCES) + parameters.experiment_name
-        results_path = new_save_path + '/results.npy'
-        results = np.load(results_path, allow_pickle=True).item()
-        indices = results['best_set_activations']
-#        indices = [4, 5, 6, 8]
+        indices = [4, 5, 6, 8]
         
         chi = MIChoquetIntegral()
         
-        chi.measure = np.array(results['full_measure'])
-    
+#        del Bags
+#        del Labels
+        
+        new_save_path =  new_directory + '/mici_min_max_binary_measure_stage_1_' + str(4) + '_sources'
+            
         parameters.feature_class = 'target'
        
         try:
@@ -665,16 +755,20 @@ if __name__== "__main__":
         except:
             img_savepath = new_save_path
             
-#
+#        measure_path = new_save_path + '/fm.npy'
+#        measure = np.load(measure_path, allow_pickle=True).item()
+#        chi.fm = measure
+        
+        
 #        results_path = new_save_path + '/results.npy'
-#        results = np.load(results_path,allow_pickle=True).item()
-#        measure = np.array(results['binary_measure'])
+#        results = np.load(results_path, allow_pickle=True).item()
+#        chi.fm = results['fm']
+#        chi.measure = ['measure']
         
+        ## 7 vs 1 pos target class for pos and neg CAM
+        measure = np.array([0.0521, 0.0408, 0.0378, 0.18105, 0.62718, 0.9199, 0.7004, 0.0618, 0.18359, 0.40604, 0.92228, 0.992003, 0.99372, 0.43601, 1.0])
+        chi.measure = measure
         
-#        ## 7 vs 1 pos target class for pos and neg CAM
-##        measure = np.array([0.0521, 0.0408, 0.0378, 0.18105, 0.62718, 0.9199, 0.7004, 0.0618, 0.18359, 0.40604, 0.92228, 0.992003, 0.99372, 0.43601, 1.0])
-##        chi.measure = measure
-#        
 #        ## 7 vs 1 neg target class for neg CAM
 #        measure = np.array([0.0187, 0.0113, 0.057, 0.0517, 0.1204, 0.0915, 0.9515, 0.0745, 0.9353, 0.1242, 0.5868, 0.9751, 0.9938, 0.9762, 1.0])
 #        chi.measure = measure
@@ -785,6 +879,13 @@ if __name__== "__main__":
             if (int(labels.detach().cpu().numpy())==parameters.mnist_target_class):
                 
                 if sample_idx < nPBagsTest:
+        
+#                    if (parameters.feature_class == 'background'):
+#                        category = 0
+#                    elif (parameters.feature_class == 'target'):
+#                        category = 1
+#                    elif (parameters.feature_class == 'mnist_class'):
+#                        category = parameters.mnist_target_class
                     
                     ############# Convert groundtruth image into mask #############
                     if (parameters.DATASET == 'mnist'):
@@ -845,10 +946,9 @@ if __name__== "__main__":
                     
                     ########### Exctract out the stage we're interested in and invert if desired #########
         #            all_activations = all_activations[0:64,:,:]
-#                    all_activations = all_activations[scores_by_stage['1']['sorted_idx'][0:10],:,:]
-                    all_activations = all_activations[initial_ind,:,:]
+                    all_activations = all_activations[scores_by_stage['1']['sorted_idx'][0:10],:,:]
                     
-                    if parameters.INCLUDE_INVERTED:
+                    if INCLUDE_INVERTED:
                         # Flip activations
                         flipped_activations = all_activations
                    
@@ -868,6 +968,7 @@ if __name__== "__main__":
                     activations = activations[:,indices]
                 
                     Bags = np.zeros((1,),dtype=np.object)
+#                    Bags[0] = activations
                     Bags[0] = da.from_array(activations)
                     
                     sample_idx += 1
@@ -908,6 +1009,31 @@ if __name__== "__main__":
                         iou_score = np.sum(intersection) / np.sum(union)
                     except:
                         iou_score = 0
+                        
+                    plt.figure()
+                    plt.imshow(binary_feature_map.reshape((gt_img.shape[0],gt_img.shape[1])))
+                    title = 'Otsu Thresholded Image: t=' + str(img_thresh) + '; IoU: ' + str(iou_score)
+                    plt.title(title)
+                        
+                    images = images.permute(2,3,1,0)
+                    images = images.detach().cpu().numpy()
+                    image = images[:,:,:,0]    
+                    
+                    ## Get SLIC segmented image
+                    
+                    sp_mask = np.zeros((gt_img.shape[0],gt_img.shape[1]))
+                    
+                    spLabels = slic(image).reshape((image.shape[0]*image.shape[1]))
+                    num_sp = np.unique(spLabels)
+                    
+                    for lab in num_sp:
+                        sp_ind = np.where(spLabels == lab)
+                        sp_val = np.sum(data_out[sp_ind])/len(data_ou[sp_ind])
+                    
+                    plt.figure()
+                    plt.imshow(binary_feature_map)
+                    title = 'SLIC Thresholded Image: t=' + str(img_thresh) + '; IoU: ' + str(iou_score)
+                    plt.title(title)
                  
                     ###########################################################################
                     ######################### Positive Visualizations #########################
@@ -938,9 +1064,9 @@ if __name__== "__main__":
                     plt.savefig(savename)
                     plt.close()
                 
-                    images = images.permute(2,3,1,0)
-                    images = images.detach().cpu().numpy()
-                    image = images[:,:,:,0]
+#                    images = images.permute(2,3,1,0)
+#                    images = images.detach().cpu().numpy()
+#                    image = images[:,:,:,0]
                 
                     cam_image = show_cam_on_image(image, data_out, True)
                     
@@ -974,6 +1100,13 @@ if __name__== "__main__":
             if (int(labels.detach().cpu().numpy())==parameters.mnist_background_class):
                 
                 if sample_idx < nPBagsTest:
+        
+#                    if (parameters.feature_class == 'background'):
+#                        category = 0
+#                    elif (parameters.feature_class == 'target'):
+#                        category = 1
+#                    elif (parameters.feature_class == 'mnist_class'):
+#                        category = parameters.mnist_target_class
                     
                     ############# Convert groundtruth image into mask #############
                     if (parameters.DATASET == 'mnist'):
@@ -1034,10 +1167,9 @@ if __name__== "__main__":
                     
                     ########### Exctract out the stage we're interested in and invert if desired #########
         #            all_activations = all_activations[0:64,:,:]
-#                    all_activations = all_activations[scores_by_stage['1']['sorted_idx'][0:10],:,:]
-                    all_activations = all_activations[initial_ind,:,:]
+                    all_activations = all_activations[scores_by_stage['1']['sorted_idx'][0:10],:,:]
                     
-                    if parameters.INCLUDE_INVERTED:
+                    if INCLUDE_INVERTED:
                         # Flip activations
                         flipped_activations = all_activations
                    

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Wed Feb 16 09:51:05 2022
+Created on Tue May 17 13:58:19 2022
 
 @author: cmccurley
 """
+
 
 """
 ***********************************************************************
@@ -241,14 +242,12 @@ if __name__== "__main__":
         target_class = 7
         background_class = 1
         
-        nPBagsTrain = 2
-        nNBagsTrain = 2
+        nPBagsTrain = 1
+        nNBagsTrain = 1
         nPBagsTest = 2
         nNBagsTest = 2
         
-#        initial_ind = [56,20,54,28,1079,31,60,61,21,111,19,1166]
-#        initial_ind = [56,20,54,28,1079,31]
-        initial_ind = [20,40,56,417,608,609,663,911]
+        initial_ind = [20,239,1338]
 
     ## Define files to save epoch training/validation
     logfilename = parameters.outf + parameters.loss_file
@@ -299,7 +298,7 @@ if __name__== "__main__":
 ###############################################################################
     
     experiment_savepath = parameters.outf.replace('output','mici_binary_measure')
-    new_save_path =  '/mici_genmean_7_versus_1_globally_picked_features'
+    new_save_path =  '/mici_source_selection_test'
     parameters.feature_class = 'target'
     
     Bags = []
@@ -545,6 +544,11 @@ if __name__== "__main__":
                 break
             
     ########################## Concatenate Information ############################
+    for idb, bag in enumerate(pBags):
+        bag = bag.compute()
+        bag[:,-1] = nBags[0][:,0].compute()
+        pBags[idb] = da.from_array(bag)
+    
     Bags = np.concatenate((nBags,pBags))
     Labels = np.concatenate((nLabels, pLabels))
     GT = np.concatenate((nBagGT, pBagGT))
@@ -556,7 +560,7 @@ if __name__== "__main__":
         ###########################################################################
         
         for SOURCES in [parameters.NUM_SOURCES]:
-            new_save_path =  new_directory + '/mici_min_max_binary_measure_global_' + str(SOURCES) + parameters.experiment_name
+            new_save_path =  new_directory + '/mici_min_max_binary_measure_handpicked_' + str(SOURCES) + parameters.experiment_name
             
             parameters.feature_class = 'target'
             
@@ -646,7 +650,7 @@ if __name__== "__main__":
         ############################### Test MICI #################################
         ###########################################################################
         
-        new_save_path =  new_directory + '/mici_min_max_binary_measure_global_' + str(parameters.NUM_SOURCES) + parameters.experiment_name
+        new_save_path =  new_directory + '/mici_min_max_binary_measure_handpicked_' + str(parameters.NUM_SOURCES) + parameters.experiment_name
         results_path = new_save_path + '/results.npy'
         results = np.load(results_path, allow_pickle=True).item()
         indices = results['best_set_activations']
@@ -678,104 +682,14 @@ if __name__== "__main__":
 #        ## 7 vs 1 neg target class for neg CAM
 #        measure = np.array([0.0187, 0.0113, 0.057, 0.0517, 0.1204, 0.0915, 0.9515, 0.0745, 0.9353, 0.1242, 0.5868, 0.9751, 0.9938, 0.9762, 1.0])
 #        chi.measure = measure
-        
-        
-#    ###########################################################################
-#    ########################### Sort Activations ##############################
-#    ###########################################################################
-#  
-#    ## Sort largest to smallest
-#    sorted_idx = (-all_importance_weights).argsort() ## indices of features in descending order
-#    sorted_fitness_values = all_importance_weights[sorted_idx]
-#    indices = [56,23]
-#
-#    activation_set = all_activations[indices,:,:]
-##            
-##    for idk in range(activation_set.shape[0]):
-##        plt.figure()
-##        plt.imshow(activation_set[idk,:,:])
-##        plt.axis('off')
-##        
-##        for ids, ext in enumerate(vgg_idx):
-##            if ((ext[0] <= sorted_idx[idk]) and (sorted_idx[idk] <= ext[1])):
-##                stage = ids
-##        
-##        title = 'VGG16 IDX: ' + str(sorted_idx[idk]) + ' | Stage: ' + str(stage+1)
-##        plt.title(title)
-##        
-##        savepath = img_savepath + '/activation_' + str(idk) + '.png'
-##        plt.savefig(savepath)
-##        plt.close()
-  
-#    ###########################################################################
-#    ######################### Compute Sort Histograms #########################
-#    ###########################################################################
-#    all_sorts = chi.all_sorts
-#    
-#    num_samples_p = dask_data_p.shape[1] 
-#    num_samples_n = dask_data_n.shape[1] 
-#    num_all_sources = dask_data_p.shape[0]
-#    
-#    ## Used for fast feature selection (Can't use more than 9 sources)
-#    encoding_vect = 10**np.arange(0,num_all_sources)[::-1]
-#    bin_centers = np.dot(np.array(all_sorts),encoding_vect)
-#    hist_bins = [0] + list(bin_centers+1)  
-#    
-#    ####### Get the sorts histogram for the positive bags #############
-#    ## Sort activations for each sample
-#    pi_i_p = np.argsort(dask_data_p,axis=0)[::-1,:] + 1 ## Sorts each sample from greatest to least
-#
-#    ## Get normalized histogram
-#    sorts_for_current_activation_p = np.dot(pi_i_p.T,encoding_vect)
-#    hist_p, _ = np.histogram(sorts_for_current_activation_p, bins=hist_bins, density=False)
-#    hist_p += 1
-#    p = hist_p/(num_samples_p + len(all_sorts))
-#    
-#    ####### Get the sorts histogram for the negative bags #############
-#    ## Sort activations for each sample
-#    pi_i_n = np.argsort(dask_data_n,axis=0)[::-1,:] + 1 ## Sorts each sample from greatest to least
-#
-#    ## Get normalized histogram
-#    sorts_for_current_activation_n = np.dot(pi_i_n.T,encoding_vect)
-#    hist_n, _ = np.histogram(sorts_for_current_activation_n, bins=hist_bins, density=False)
-#    hist_n += 1
-#    q = hist_n/(num_samples_n + len(all_sorts))
-#   
-#    ## Define custom colormap
-#    custom_cmap = plt.cm.get_cmap('jet', len(all_sorts))
-#    norm = matplotlib.colors.Normalize(vmin=1,vmax=len(all_sorts))
-#    
-#    ## Plot frequency histogram of sorts for single image
-#    width = 1
-#    hist_ind = np.arange(0.5,len(all_sorts)+0.5)
-#    sort_tick_labels = []
-#    for element in all_sorts:
-#        sort_tick_labels.append(str(element))
-#    hist_bins = list(np.arange(0,len(all_sorts)+1)+0.5)
-#    plt.figure(figsize=[10,8])
-#    ax = plt.axes()
-#    plt.xlabel('Sorts', fontsize=14)
-#    plt.ylabel('Count', fontsize=14)
-#    plt.bar(hist_ind, q, align='edge', facecolor='navy', width=width, label='Negative Bags')
-#    plt.bar([i+0.25*width for i in hist_ind], p, align='edge', facecolor='darkorange', width=0.5*width, label='Positive Bags', alpha=0.7)
-#    
-#    plt.xlim([0.5,len(all_sorts)+0.5])
-#    ax.set_xticks(list(np.arange(1,len(all_sorts)+1)))
-#    ax.set_xticklabels(sort_tick_labels,rotation=45,ha='right')
-#    title = 'Histogram of Sorts'
-#    plt.title(title, fontsize=18)
-#    plt.legend()
-#    savename = new_directory + '/hist_of_sorts_pos.png'
-#    plt.savefig(savename)
-#    plt.close()
-#            
+             
         ###########################################################################
         ################################ Test Data ################################
         ###########################################################################
         print('Testing positive data...')  
        
         sample_idx = 0
-        for data in tqdm(valid_loader):
+        for data in tqdm(train_loader):
             
             if (parameters.DATASET == 'mnist'):
                 images, labels = data[0].to(device), data[1].to(device)
@@ -869,6 +783,10 @@ if __name__== "__main__":
                 
                     Bags = np.zeros((1,),dtype=np.object)
                     Bags[0] = da.from_array(activations)
+                    
+                    bag = Bags[0].compute()
+                    bag[:,-1] = nBags[0][:,0].compute()
+                    Bags[0] = da.from_array(bag)
                     
                     sample_idx += 1
                         
@@ -964,7 +882,7 @@ if __name__== "__main__":
         print('Testing negative data...')  
        
         sample_idx = 0
-        for data in tqdm(valid_loader):
+        for data in tqdm(train_loader):
             
             if (parameters.DATASET == 'mnist'):
                 images, labels = data[0].to(device), data[1].to(device)

@@ -451,7 +451,8 @@ class BinaryMIChoquetIntegral:
         mVal = fitnessPop[indx]
         measure = measurePop[indx,:]  
         initialMeasure = measure
-        mVal_before = -10000
+        u = []
+        Uf = False
         
         q=0
         
@@ -535,10 +536,12 @@ class BinaryMIChoquetIntegral:
             
             ## Update best answer - printed to the terminal
             if(np.max(fitnessPop) > mVal):
-                mVal_before = deepcopy(mVal)
+                q = 0
                 mIdx = (-fitnessPop).argsort()[0]
                 mVal = deepcopy(fitnessPop[mIdx])
                 measure = deepcopy(measurePop[mIdx,:])
+            else:
+                q += 1
             
             ###################################################################
             ##################### Update Analysis Tracker #####################
@@ -557,8 +560,6 @@ class BinaryMIChoquetIntegral:
                     Analysis['ratiomVal'] = np.zeros((Parameters.maxIterations))
                     Analysis['ratio'] = np.zeros((Parameters.maxIterations))
                     Analysis['JumpType'] = np.zeros((Parameters.maxIterations,len(JumpType))) 
-#                    Analysis['ElemIdxUpdated'] = np.zeros((Parameters.maxIterations,len(ElemIdxUpdated))) 
-#                    Analysis['subsetIntervalnPop'] = np.zeros((subsetIntervalnPop.shape[0],subsetIntervalnPop.shape[1],Parameters.maxIterations)) 
                 else:
                     Analysis['ParentChildMeasure'][:,:,t] = deepcopy(ParentChildMeasure)
                     Analysis['ParentChildFitness'][t,:] = deepcopy(ParentChildFitness)
@@ -572,8 +573,6 @@ class BinaryMIChoquetIntegral:
                     Analysis['ratiomVal'][t] = deepcopy(mVal)
                     Analysis['ratio'][t] = np.exp(np.sum(fitnessPop)-np.sum(fitnessPopPrev))
                     Analysis['JumpType'][t,:] = deepcopy(JumpType)
-#                    Analysis['ElemIdxUpdated'][t,:] = ElemIdxUpdated
-#                    Analysis['subsetIntervalnPop'][:,:,t] = subsetIntervalnPop  
             
             ## Update terminal 
 #            if(not(t % 10)):
@@ -594,8 +593,9 @@ class BinaryMIChoquetIntegral:
             ## Stop if we've found a measure meeting our desired level of fitness
             if (q >= Parameters.Q):
                 break
+            elif Uf:
+                break
             
-            q+=1
     
         return measure, initialMeasure, Analysis
     
